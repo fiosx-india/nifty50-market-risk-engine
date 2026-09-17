@@ -1,0 +1,10 @@
+﻿SYMBOL,MARKET,RANK,PCT_CHANGE,LINKAGE_SCORE,RELATION
+ONGC,Aluminium,36,0.36,0.024,Moderate
+ONGC,Copper,36,0.36,0.024,Moderate
+ONGC,Crude Oil,36,0.36,0.784,Positive
+ONGC,Electricity,36,0.36,0.024,Moderate
+ONGC,Gold,36,0.36,0.024,Moderate
+ONGC,NIFTY 50,36,0.36,0.736,Positive
+ONGC,Natural Gas,36,0.36,0.664,Positive
+ONGC,Silver,36,0.36,0.024,Moderate
+ONGC,Zinc,36,0.36,0.024,Moderate
