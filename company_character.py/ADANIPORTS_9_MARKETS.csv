@@ -1,10 +1,10 @@
-﻿SYMBOL,MARKET,RANK,PCT_CHANGE,LINKAGE_SCORE,RELATION
-ADANIPORTS,Aluminium,42,0.58,0.0387,Moderate
-ADANIPORTS,Copper,42,0.58,0.0387,Moderate
-ADANIPORTS,Crude Oil,42,0.58,0.3187,Moderate
-ADANIPORTS,Electricity,42,0.58,0.2387,Moderate
-ADANIPORTS,Gold,42,0.58,0.0387,Moderate
-ADANIPORTS,NIFTY 50,42,0.58,0.758,Positive
-ADANIPORTS,Natural Gas,42,0.58,0.0387,Moderate
-ADANIPORTS,Silver,42,0.58,0.0387,Moderate
-ADANIPORTS,Zinc,42,0.58,0.0387,Moderate
+﻿SYMBOL,MARKET,COMPANY_CHARACTER,EXPOSURE_CHARACTER,IMPACT_PATH,CALCULATION_LOGIC
+ADANIPORTS,NIFTY 50,"Integrated transport utility built around ports, logistics and marine operations",Primary systematic-market relationship,NIFTY movement → market sentiment/liquidity/valuation → ADANIPORTS,"Calculate return correlation, beta, rolling relationship, relative strength, downside sensitivity and lag impact"
+ADANIPORTS,Crude Oil,Port and logistics operator handling diversified cargo including crude-related and energy cargo,Direct cargo-flow + indirect fuel/logistics relationship,Crude price/trade activity → energy cargo volumes + shipping/logistics economics + fuel conditions → company activity,Separate cargo-volume relationship from fuel-cost relationship; test contemporaneous and lagged effects and control for NIFTY
+ADANIPORTS,Gold,"Diversified port, logistics and marine platform rather than a gold producer",Indirect trade-flow / macro relationship,"Gold movement → risk sentiment, currency/liquidity and trade conditions → cargo/logistics environment → stock","Test whether gold adds explanatory power after controlling NIFTY, trade variables and other commodities; do not assume direct exposure"
+ADANIPORTS,Silver,Integrated transport and logistics platform exposed to industrial and trade activity,Indirect industrial-trade relationship,Silver movement → industrial demand/commodity cycle → cargo and trade activity → logistics environment → stock,"Measure historical return, rolling correlation, lag and volatility relationship; test incremental explanatory power"
+ADANIPORTS,Natural Gas,"Port and marine network handling energy and industrial cargo, including LNG-related cargo at relevant terminals",Cargo-flow + energy-trade relationship,Natural-gas/LNG conditions → energy cargo demand and trade flows → port volumes/logistics activity → stock,"Measure gas return against cargo/stock behaviour, lag effects and event periods; distinguish cargo impact from broad energy sentiment"
+ADANIPORTS,Copper,Port and logistics platform serving industrial and commodity supply chains,Industrial cargo / trade-cycle relationship,Copper cycle → industrial activity and trade demand → bulk/container cargo flows → logistics utilisation → stock,"Calculate copper-return relationship, rolling beta, lag response and interaction with industrial/market indicators"
+ADANIPORTS,Aluminium,"Port and logistics platform with exposure to bulk, container and industrial cargo flows",Industrial cargo / commodity-cycle relationship,Aluminium cycle → industrial production/trade → cargo throughput → port/logistics activity → stock,"Test aluminium return, volume/throughput relationship, rolling correlation and lag impact; control for NIFTY"
+ADANIPORTS,Zinc,"Integrated transport platform serving industrial, bulk and container supply chains",Industrial cargo / infrastructure-cycle relationship,Zinc cycle → construction/industrial activity → cargo demand → port/logistics volumes → stock,"Measure historical and lagged relationship, rolling stability and interaction with other metals; avoid assuming direct causation"
+ADANIPORTS,Electricity,"Asset-heavy ports, logistics and marine operator with large physical infrastructure",Operational energy-cost relationship,Electricity conditions → terminal/warehouse/logistics operating costs and infrastructure economics → margins/cash flows → stock,"Measure electricity-price/availability relationship where reliable data exists, including lag, volatility and event effects"
