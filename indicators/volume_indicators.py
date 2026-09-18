@@ -1,110 +1,330 @@
-"""Volume and price-volume evidence.
+"""
+Volume Indicators
+=================
 
-Validation-focused volume observations. These functions calculate descriptive
-evidence only; they do not produce trading decisions.
+Pure volume/price-volume calculations.
+
+Responsibilities:
+- Relative Volume
+- On-Balance Volume (OBV)
+- Accumulation/Distribution
+- Price-volume confirmation
+
+No BUY / SELL / HOLD decisions.
+No market-specific assumptions.
+No hard-coded results.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from math import isfinite
-from typing import Any
+import math
+from typing import Iterable
 
 
-def _numeric_sequence(values: Sequence[Any], name: str) -> list[float]:
-    result: list[float] = []
-    for value in values:
-        number = float(value)
-        if not isfinite(number):
-            raise ValueError(f"{name} must contain only finite numbers")
-        result.append(number)
+Number = float | int
+
+
+def _series(values: Iterable[Number], name: str) -> list[float]:
+    result = [float(value) for value in values]
+
+    if not result:
+        raise ValueError(f"{name} must not be empty")
+
+    if any(not math.isfinite(value) for value in result):
+        raise ValueError(f"{name} contains non-finite values")
+
     return result
 
 
-def _positive_period(period: int) -> int:
-    if isinstance(period, bool) or not isinstance(period, int) or period <= 0:
-        raise ValueError("period must be a positive integer")
+def _period(period: int) -> int:
+    if isinstance(period, bool) or not isinstance(period, int):
+        raise TypeError("period must be an integer")
+
+    if period <= 0:
+        raise ValueError("period must be greater than zero")
+
     return period
 
 
-def relative_volume(volume: Sequence[Any], period: int = 20) -> float | None:
-    """Return latest volume divided by the previous-period average volume."""
-    period = _positive_period(period)
-    values = _numeric_sequence(volume, "volume")
-    if len(values) < period + 1:
-        return None
+def _same_length(*values: list[float]) -> None:
+    lengths = {len(value) for value in values}
 
-    avg = sum(values[-period - 1:-1]) / period
-    return values[-1] / avg if avg else None
+    if len(lengths) != 1:
+        raise ValueError("all input series must have equal length")
 
 
-def obv(close: Sequence[Any], volume: Sequence[Any]) -> float:
-    """Return cumulative On-Balance Volume for the common observation range."""
-    prices = _numeric_sequence(close, "close")
-    volumes = _numeric_sequence(volume, "volume")
+def _validate_ohlc(
+    high: list[float],
+    low: list[float],
+    close: list[float],
+) -> None:
+    _same_length(high, low, close)
 
-    if len(prices) < 2 or len(volumes) < 2:
-        return 0.0
+    for i, (h, l, c) in enumerate(zip(high, low, close)):
+        if h < l:
+            raise ValueError(f"high must be >= low at index {i}")
 
-    count = min(len(prices), len(volumes))
-    value = 0.0
+        if not l <= c <= h:
+            raise ValueError(
+                f"close must be between low and high at index {i}"
+            )
 
-    for i in range(1, count):
+
+# ---------------------------------------------------------------------------
+# Relative Volume
+# ---------------------------------------------------------------------------
+
+
+def relative_volume(
+    volume: Iterable[Number],
+    period: int = 20,
+) -> list[float | None]:
+    """
+    Calculate current volume divided by rolling average volume.
+
+    The current observation is included in the rolling window.
+    """
+    period = _period(period)
+    values = _series(volume, "volume")
+
+    if any(value < 0 for value in values):
+        raise ValueError("volume must not contain negative values")
+
+    result: list[float | None] = [None] * len(values)
+
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        average = sum(window) / period
+
+        if average == 0:
+            result[i] = None
+        else:
+            result[i] = values[i] / average
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# On-Balance Volume
+# ---------------------------------------------------------------------------
+
+
+def obv_series(
+    close: Iterable[Number],
+    volume: Iterable[Number],
+) -> list[float]:
+    """
+    Calculate cumulative On-Balance Volume.
+
+    Rules:
+    - rising close  -> add volume
+    - falling close -> subtract volume
+    - unchanged     -> unchanged
+    """
+    prices = _series(close, "close")
+    volumes = _series(volume, "volume")
+
+    _same_length(prices, volumes)
+
+    if any(value < 0 for value in volumes):
+        raise ValueError("volume must not contain negative values")
+
+    result: list[float] = [0.0]
+
+    for i in range(1, len(prices)):
+        previous = result[-1]
+
         if prices[i] > prices[i - 1]:
-            value += volumes[i]
+            result.append(previous + volumes[i])
         elif prices[i] < prices[i - 1]:
-            value -= volumes[i]
+            result.append(previous - volumes[i])
+        else:
+            result.append(previous)
 
-    return value
+    return result
+
+
+def obv(
+    close: Iterable[Number],
+    volume: Iterable[Number],
+) -> float:
+    """Return the latest OBV value."""
+    return obv_series(close, volume)[-1]
+
+
+# ---------------------------------------------------------------------------
+# Accumulation / Distribution
+# ---------------------------------------------------------------------------
+
+
+def accumulation_distribution_series(
+    high: Iterable[Number],
+    low: Iterable[Number],
+    close: Iterable[Number],
+    volume: Iterable[Number],
+) -> list[float]:
+    """
+    Calculate cumulative Accumulation/Distribution Line.
+
+    Money Flow Multiplier:
+
+        ((Close - Low) - (High - Close)) / (High - Low)
+
+    Money Flow Volume:
+
+        multiplier * volume
+    """
+    h = _series(high, "high")
+    l = _series(low, "low")
+    c = _series(close, "close")
+    v = _series(volume, "volume")
+
+    _validate_ohlc(h, l, c)
+    _same_length(h, v)
+
+    if any(value < 0 for value in v):
+        raise ValueError("volume must not contain negative values")
+
+    result: list[float] = []
+    cumulative = 0.0
+
+    for high_value, low_value, close_value, volume_value in zip(
+        h,
+        l,
+        c,
+        v,
+    ):
+        spread = high_value - low_value
+
+        if spread == 0:
+            multiplier = 0.0
+        else:
+            multiplier = (
+                (close_value - low_value)
+                - (high_value - close_value)
+            ) / spread
+
+        cumulative += multiplier * volume_value
+        result.append(cumulative)
+
+    return result
 
 
 def accumulation_distribution(
-    high: Sequence[Any],
-    low: Sequence[Any],
-    close: Sequence[Any],
-    volume: Sequence[Any],
+    high: Iterable[Number],
+    low: Iterable[Number],
+    close: Iterable[Number],
+    volume: Iterable[Number],
 ) -> float:
-    """Return cumulative Accumulation/Distribution line value."""
-    highs = _numeric_sequence(high, "high")
-    lows = _numeric_sequence(low, "low")
-    closes = _numeric_sequence(close, "close")
-    volumes = _numeric_sequence(volume, "volume")
+    """Return the latest Accumulation/Distribution value."""
+    return accumulation_distribution_series(
+        high,
+        low,
+        close,
+        volume,
+    )[-1]
 
-    count = min(len(highs), len(lows), len(closes), len(volumes))
-    total = 0.0
 
-    for i in range(count):
-        h, l, c, v = highs[i], lows[i], closes[i], volumes[i]
-        if h < l:
-            raise ValueError("high cannot be below low")
-        if c < l or c > h:
-            raise ValueError("close must be within high/low range")
-
-        money_flow_multiplier = (
-            ((c - l) - (h - c)) / (h - l)
-            if h != l
-            else 0.0
-        )
-        total += money_flow_multiplier * v
-
-    return total
+# ---------------------------------------------------------------------------
+# Price-Volume Confirmation
+# ---------------------------------------------------------------------------
 
 
 def price_volume_confirmation(
-    close: Sequence[Any], volume: Sequence[Any]
-) -> dict[str, bool]:
-    """Describe whether price and volume moved in the same direction."""
-    prices = _numeric_sequence(close, "close")
-    volumes = _numeric_sequence(volume, "volume")
+    close: Iterable[Number],
+    volume: Iterable[Number],
+    period: int = 20,
+) -> list[float | None]:
+    """
+    Calculate a descriptive price-volume confirmation metric.
 
-    if len(prices) < 2 or len(volumes) < 2:
-        return {"confirmed": False}
+    Formula:
 
-    price_up = prices[-1] > prices[-2]
-    volume_up = volumes[-1] > volumes[-2]
+        sign(price return) * relative volume
+
+    Interpretation is intentionally left to higher layers.
+
+    Positive:
+        price increased while volume was above/below average according
+        to the magnitude.
+
+    Negative:
+        price decreased.
+
+    Zero:
+        unchanged price.
+    """
+    period = _period(period)
+
+    prices = _series(close, "close")
+    volumes = _series(volume, "volume")
+
+    _same_length(prices, volumes)
+
+    if any(value < 0 for value in volumes):
+        raise ValueError("volume must not contain negative values")
+
+    rv = relative_volume(
+        volumes,
+        period=period,
+    )
+
+    result: list[float | None] = [None] * len(prices)
+
+    for i in range(1, len(prices)):
+        if rv[i] is None:
+            continue
+
+        if prices[i] > prices[i - 1]:
+            result[i] = rv[i]
+        elif prices[i] < prices[i - 1]:
+            result[i] = -rv[i]
+        else:
+            result[i] = 0.0
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+
+
+def volume_summary(
+    high: Iterable[Number],
+    low: Iterable[Number],
+    close: Iterable[Number],
+    volume: Iterable[Number],
+    period: int = 20,
+) -> dict[str, float | None]:
+    """Return the latest available volume-related measurements."""
+    h = _series(high, "high")
+    l = _series(low, "low")
+    c = _series(close, "close")
+    v = _series(volume, "volume")
+
+    _validate_ohlc(h, l, c)
+    _same_length(h, v)
+
+    rv = relative_volume(v, period=period)
+    obv_values = obv_series(c, v)
+    ad_values = accumulation_distribution_series(h, l, c, v)
+    pv_values = price_volume_confirmation(c, v, period=period)
 
     return {
-        "price_up": price_up,
-        "volume_up": volume_up,
-        "confirmed": price_up == volume_up,
+        "relative_volume": rv[-1],
+        "obv": obv_values[-1],
+        "accumulation_distribution": ad_values[-1],
+        "price_volume_confirmation": pv_values[-1],
     }
+
+
+__all__ = [
+    "relative_volume",
+    "obv_series",
+    "obv",
+    "accumulation_distribution_series",
+    "accumulation_distribution",
+    "price_volume_confirmation",
+    "volume_summary",
+]
