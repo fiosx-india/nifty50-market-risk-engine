@@ -855,3 +855,481 @@ Prediction சரியாக இருந்ததா?
 
 
 இது உங்கள் முன்பு வைத்திருந்த “ஒவ்வொரு module-மும் evidence கொடுக்க வேண்டும்; final decision ஒரே orchestration layer-ல் இருக்க வேண்டும்” என்ற architecture principle-க்கும் பொருந்தும்.
+ஆமாம். இப்போது நீங்கள் கேட்பது “Gold, Silver, Crude, Natural Gas போன்ற 9 sources-ஐ வைத்து 50 companies-ஐ map பண்ணுகிறோம்; அதைவிட பெரிய predictive intelligence-க்கு இன்னும் என்னென்ன data-set / tool-set சேர்க்கலாம்?” என்பதுதான்.
+
+இதில் முக்கியமான விஷயம்: ஒரே ஒரு “சூப்பர் indicator” கிடையாது. அதற்கு பதிலாக பல தனித்தனி signal families-ஐ ஒன்றாக இணைத்தால் system-ன் explanatory/early-warning power அதிகரிக்கும்.
+
+உங்கள் project-க்கு நான் இதை 12 பெரிய Intelligence Sets ஆகப் பிரிப்பேன்.
+
+1. 🌍 Global Macro Set — மிகவும் முக்கியம்
+
+Gold/Crude மட்டும் போதாது.
+
+US Interest Rate / Fed
+US 10Y Yield
+US Dollar Index (DXY)
+Global Inflation
+US CPI / PPI
+Employment data
+GDP
+PMI / ISM
+Global central-bank decisions
+Global bond yields
+
+இவை பல asset classes-ஐ ஒரே நேரத்தில் நகர்த்தக்கூடிய macro layer.
+
+
+---
+
+2. 💵 Currency Set
+
+இந்திய நிறுவனங்களுக்கு இது மிகவும் முக்கியமான ஒரு bridge.
+
+USD/INR
+EUR/INR
+JPY/INR
+DXY
+USD/CNY
+
+பிறகு:
+
+Currency
+ ↓
+Import Cost / Export Revenue
+ ↓
+Margin
+ ↓
+Company
+
+என்று company character-க்கு அனுப்ப வேண்டும்.
+
+
+---
+
+3. 📈 Interest Rate + Bond Set
+
+இது குறிப்பாக Banks / NBFC / Insurance மட்டும் அல்ல; முழு market-க்கும் பயன்படும்.
+
+RBI Repo Rate
+10Y G-Sec
+US 10Y
+Credit spreads
+Yield curve
+Liquidity
+MIBOR
+
+NSE-யே interest-rate derivatives, government-security futures, T-bill futures, MIBOR futures போன்ற instruments-ஐ track செய்கிறது. 
+
+
+---
+
+4. 😨 Volatility / Fear Set
+
+India VIX-ஐ தனியாக ஒரு முக்கிய source ஆக சேர்க்க வேண்டும்.
+
+NSE-ன் விளக்கப்படி India VIX, NIFTY options order book-இலிருந்து அடுத்த 30 calendar days-க்கான expected volatility-ஐ அளவிடுகிறது. 
+
+இதுடன்:
+
+India VIX
+US VIX
+VIX term structure
+Volatility skew
+Realized volatility
+Implied volatility
+
+சேர்க்கலாம்.
+
+இது:
+
+Normal Market
+      ↓
+Stress Building
+      ↓
+Risk Expansion
+
+என்று ஒரு Regime detector ஆக பயன்படலாம்.
+
+
+---
+
+5. 📊 Derivatives / Options Intelligence Set
+
+இது உங்கள் system-க்கு மிகவும் வலுவான layer ஆக இருக்கும்.
+
+ஒவ்வொரு F&O company-க்கும்:
+
+Open Interest
+OI Change
+Volume
+Price + OI relationship
+Call OI
+Put OI
+PCR
+Strike concentration
+IV
+IV skew
+ATM IV
+Expiry structure
+Futures basis
+Roll-over
+Long buildup
+Short buildup
+Short covering
+Long unwinding
+
+NSE-ல் F&O open interest, participant-wise OI, FII derivatives statistics, delta-equivalent OI போன்ற பல reports கிடைக்கின்றன. 
+
+இது price மட்டும் என்ன சொல்கிறது? என்பதிலிருந்து positioning என்ன சொல்கிறது? என்பதுக்கு system-ஐ கொண்டு செல்கிறது.
+
+
+---
+
+6. 👥 Institutional Flow Set
+
+நீங்கள் ஏற்கனவே FII/DII பற்றி பேசினீர்கள். இதை தனி intelligence family ஆக்கலாம்.
+
+FII/FPI
+DII
+Mutual Funds
+Insurance
+Proprietary traders
+Participant-wise derivatives positioning
+Cash-market flow
+Sector-wise flow
+
+NSE தற்போது FII/FPI மற்றும் DII activity-க்கான reports-ஐ வழங்குகிறது. 
+
+இதிலிருந்து:
+
+Institutional Flow
+ ↓
+Market / Sector
+ ↓
+Company
+
+என்ற layer உருவாக்கலாம்.
+
+
+---
+
+7. 🏭 Sector Rotation Set
+
+இது 9 commodities → 50 companies இடையிலான missing bridge-களில் ஒன்று.
+
+உதாரணமாக:
+
+Commodity
+ ↓
+Industry
+ ↓
+Sector
+ ↓
+Company
+
+மேலும்:
+
+IT
+Banking
+Auto
+Pharma
+Metals
+Energy
+Telecom
+Consumer
+Infrastructure
+FMCG
+
+ஒவ்வொரு sector-க்கும்:
+
+Relative strength
+
+Momentum
+
+Breadth
+
+Volume
+
+Fund flow
+
+Volatility
+
+Earnings trend
+
+
+கணக்கிடலாம்.
+
+
+---
+
+8. 🚢 Supply Chain / Physical Economy Set
+
+இது உங்கள் concept-ஐ இன்னும் ஆழமாக்கும்.
+
+Shipping rates
+Freight
+Port activity
+Container rates
+Inventory
+Warehouse stocks
+Production
+Imports
+Exports
+Power demand
+Industrial production
+
+அப்போது:
+
+Commodity price மட்டும் அல்ல → commodity physically எங்கே செல்கிறது?
+
+என்பதும் தெரியும்.
+
+
+---
+
+9. 🏢 Company Fundamental Set
+
+ஒவ்வொரு 50 நிறுவனத்துக்கும்:
+
+Revenue
+EBITDA
+Margins
+EPS
+Debt
+Interest cost
+Cash flow
+Capex
+ROCE
+ROE
+Working capital
+Inventory
+Receivables
+Order book
+Guidance
+Capacity utilization
+
+இவற்றை character model-ல் சேர்க்கலாம்.
+
+இதுதான்:
+
+“Price ஏன் மாறலாம்?”
+
+என்பதற்கு business-level evidence.
+
+
+---
+
+10. 🧾 Corporate Action / Ownership Set
+
+நீங்கள் கேட்ட Bulk/Block Deal-ஐ இதற்குள் வைக்கலாம்:
+
+Bulk Deals
+Block Deals
+Promoter Buying/Selling
+Insider transactions
+Pledge
+Shareholding changes
+Large institutional ownership changes
+Buyback
+Dividend
+Bonus
+Split
+Rights issue
+QIP
+Fund raising
+M&A
+
+SEBI-ன் rules-ல் bulk deal என்பது ஒரு scrip-ல் listed equity-யின் 0.5%-ஐ மீறும் aggregate transaction disclosure-ஐ உள்ளடக்குகிறது; broker/exchange disclosures-ல் client, quantity, price போன்ற தகவல்கள் வருகின்றன. 
+
+
+---
+
+11. 📰 Event / News Intelligence Set
+
+இதை simple news scraper ஆக வைத்திருக்கக்கூடாது.
+
+News
+ ↓
+Entity recognition
+ ↓
+Event classification
+ ↓
+Affected market
+ ↓
+Affected sector
+ ↓
+Affected company
+ ↓
+Expected pathway
+ ↓
+Historical analogues
+ ↓
+Actual market reaction
+
+இதுதான் உங்கள் Impact Chain Memory-க்கு input.
+
+
+---
+
+12. 🧠 Market Microstructure Set
+
+இது இன்னும் advanced layer.
+
+Volume
+Delivery
+Bid/Ask
+Spread
+Order imbalance
+Trade intensity
+Large trades
+Price impact
+Liquidity
+Intraday volatility
+VWAP deviation
+Auction/pre-open behaviour
+
+NSE derivatives data-ல் volume, value, OI, number of orders, number of trades போன்ற market-activity fields கிடைக்கின்றன. 
+
+இதனால் “price move உண்மையான participation-ஆடு வருகிறதா?” போன்ற கேள்விகளை ஆராயலாம்.
+
+
+---
+
+🔥 இதைவிட இன்னும் powerful ஒரு Set
+
+நான் உங்கள் project-ல் இதை தனியாக வைத்திருப்பேன்:
+
+🕸️ Cross-Market Graph Intelligence
+
+இதுதான் உங்கள் idea-க்கு மிகவும் பொருத்தமான advanced layer.
+
+ஒவ்வொரு entity-யையும் ஒரு node என்று எடுத்துக்கொள்வோம்:
+
+Gold
+Crude
+USDINR
+DXY
+10Y Yield
+India VIX
+NIFTY
+Banking
+Auto
+Metal
+TCS
+HDFCBANK
+RELIANCE
+...
+
+பிறகு relationships:
+
+Gold ─────→ Titan
+Crude ────→ Aviation
+Crude ────→ Paint
+USDINR ───→ IT
+USDINR ───→ Pharma
+Yield ────→ Banks
+Copper ───→ Capital Goods
+Power ────→ Metals
+
+ஆனால் இவை hard-coded prediction links அல்ல.
+
+Historical data மூலம்:
+
+Relationship Strength
+Direction
+Lag
+Stability
+Regime dependence
+Confidence
+
+கணக்கிடப்பட வேண்டும்.
+
+
+---
+
+🚨 இன்னும் ஒரு மிக முக்கியமான layer — Regime Detection
+
+இது இல்லாமல் இவ்வளவு data சேர்த்தாலும் system குழப்பமடையலாம்.
+
+System முதலில்:
+
+Bull Market
+Bear Market
+Sideways
+High Volatility
+Low Volatility
+Risk-On
+Risk-Off
+Inflation regime
+Deflationary regime
+Liquidity expansion
+Liquidity contraction
+Commodity shock
+Geopolitical stress
+
+போன்ற current market regime கண்டறிய வேண்டும்.
+
+ஏனெனில்:
+
+> இன்று Gold → Company X relationship எப்படி இருக்கிறது என்பது, வேறு market regime-ல் அதே மாதிரி இருக்கும் என்று அவசியமில்லை.
+
+
+
+இதுதான் உங்கள் “Character என்பது evolving” என்ற கருத்துடன் நேரடியாக பொருந்துகிறது.
+
+
+---
+
+🎯 ஆக, உங்கள் system-ன் முழு data universe இப்படியாக இருக்கலாம்
+
+GLOBAL MACRO
+                     │
+        ┌────────────┼────────────┐
+        ↓            ↓            ↓
+   COMMODITIES     CURRENCY     RATES/YIELDS
+        │            │            │
+        └────────────┼────────────┘
+                     ↓
+              GLOBAL MARKETS
+                     ↓
+              VOLATILITY/VIX
+                     ↓
+          INSTITUTIONAL FLOWS
+                     ↓
+          DERIVATIVES / OPTIONS
+                     ↓
+             SECTOR ROTATION
+                     ↓
+          SUPPLY-CHAIN / PHYSICAL
+                     ↓
+             COMPANY FUNDAMENTALS
+                     ↓
+          NEWS / EVENTS / DEALS
+                     ↓
+          MARKET MICROSTRUCTURE
+                     ↓
+             TECHNICAL PATTERNS
+                     ↓
+             REGIME DETECTION
+                     ↓
+          CROSS-MARKET GRAPH
+                     ↓
+              50 COMPANIES
+                     ↓
+             LEAD / LAG
+                     ↓
+             EVIDENCE ENGINE
+                     ↓
+          EARLY-WARNING OUTPUT
+
+எனவே Gold, Silver, Crude, Gas, Copper, Aluminium, Zinc, Electricity மட்டும் முதல் layer.
+
+அதற்கு மேலே நான் முக்கியமாக சேர்ப்பது:
+
+Currency + Rates/Yields + VIX + Derivatives/Options + Institutional Flows + Sector Rotation + Supply Chain + Fundamentals + Corporate Actions + News/Events + Microstructure + Regime Detection + Cross-Market Graph.
+
+இவை எல்லாம் சேரும்போது நீங்கள் ஆரம்பத்தில் சொன்ன “ஒரு இடத்தில் பாதிப்பு ஏற்பட்டால் அது எந்த வழியில் அடுத்த இடத்துக்கு சென்று, எந்த company-ஐ எப்போது பாதிக்கலாம்?” என்ற கேள்வியை கணக்கிடுவதற்கு மிகவும் பெரிய evidence network கிடைக்கும்.
+
+மேலும் NSE-யின் தற்போதைய market-data ecosystem-லேயே equity derivatives, commodity derivatives, currency derivatives, participant-wise OI, FII derivatives, corporate filings போன்ற பல raw data families இருக்கின்றன. 
+
+ஆனால் இதையெல்லாம் ஒரே நேரத்தில் code-ல் குவிக்க வேண்டாம். முதலில் இந்த Intelligence Sets-ஐ master concept-ல் வகைப்படுத்தி, ஏற்கனவே உள்ள markets / relationship_engine / historical / indicators / news_events / context / orchestration architecture-ல் ஒவ்வொன்றுக்கும் சரியான இடத்தை map செய்வது தான் அடுத்த சரியான படி.
