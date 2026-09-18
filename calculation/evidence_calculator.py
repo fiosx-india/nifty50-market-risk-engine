@@ -1,156 +1,135 @@
-"""Timestamp-aware abnormal-return event study.
+"""Auditable evidence records for the shared Market Context.
 
-This module preserves the legacy numeric-sequence API while adding the
-canonical timestamp-aware alignment contract.
+This module stores calculated observations and their provenance. It does not
+calculate correlations, infer causation, generate signals, or rank outcomes.
 
-For timestamped observations, asset and benchmark returns are aligned by
-exact UTC timestamp intersection. Missing observations are retained as gaps;
-they are never filled, positionally paired, silently truncated, or sorted by
-this module. Correlation/causation conclusions are outside this module.
+The evidence envelope is intentionally provider-neutral so downstream
+relationship, historical, global-effect, news/event, and orchestration layers
+can consume one consistent record.
 """
 
 from __future__ import annotations
 
-from statistics import mean
-from typing import Any, Mapping
-
-from calculation.timestamp_alignment import (
-    TimestampAlignmentError,
-    align_timestamp_intersection,
-)
+from dataclasses import dataclass
+from typing import Any
 
 
-def _is_timestamped(values: Any) -> bool:
-    return bool(values) and isinstance(values[0], Mapping)
+@dataclass(frozen=True)
+class EvidenceRecord:
+    """Immutable, auditable analytical evidence."""
 
+    symbol: str
+    market: str
+    timeframe: str
+    metric: str
+    value: Any
+    sample_size: int
+    source: str
+    methodology: str
 
-def _validate_return_records(records, name: str):
-    """Validate timestamped return records and return a concrete list."""
-    items = list(records)
-    if not items:
-        return []
+    # Timestamp/provenance fields.
+    timestamp_window: Any = None
+    calculation_method: str = "unspecified"
+    lag: int | None = None
+    data_quality: str = "unknown"
+    data_freshness: str = "unknown"
 
-    # Reuse the canonical timestamp/alignment validation by pairing later.
-    for index, item in enumerate(items):
-        if not isinstance(item, Mapping):
-            raise TimestampAlignmentError(
-                f"{name}[{index}] must be a timestamped return observation"
-            )
-        if "timestamp" not in item or "value" not in item:
-            raise TimestampAlignmentError(
-                f"{name}[{index}] requires timestamp and value"
-            )
-        try:
-            value = float(item["value"])
-        except (TypeError, ValueError) as exc:
-            raise TimestampAlignmentError(
-                f"{name}[{index}] value must be numeric"
-            ) from exc
-        if not (value == value and abs(value) != float("inf")):
-            raise TimestampAlignmentError(
-                f"{name}[{index}] value must be finite"
-            )
-    return items
+    # Analytical status / limitations.
+    causation_claim: bool = False
+    status: str = "observed"
+    limitations: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.symbol, str) or not self.symbol.strip():
+            raise ValueError("symbol must be a non-empty string")
 
-def abnormal_returns(asset_returns, benchmark_returns):
-    """Calculate asset minus benchmark return.
+        if not isinstance(self.market, str) or not self.market.strip():
+            raise ValueError("market must be a non-empty string")
 
-    Legacy numeric inputs return ``list[float]``.
+        if not isinstance(self.timeframe, str) or not self.timeframe.strip():
+            raise ValueError("timeframe must be a non-empty string")
 
-    Timestamped inputs return observations containing:
-    ``timestamp``, ``value``, and the aligned asset/benchmark returns.
-    Alignment is an exact timestamp intersection.
-    """
-    asset = list(asset_returns)
-    benchmark = list(benchmark_returns)
+        if not isinstance(self.metric, str) or not self.metric.strip():
+            raise ValueError("metric must be a non-empty string")
 
-    timestamped = _is_timestamped(asset) or _is_timestamped(benchmark)
-    if timestamped:
-        if not (_is_timestamped(asset) and _is_timestamped(benchmark)):
-            raise TimestampAlignmentError(
-                "asset and benchmark observations must both be timestamped"
-            )
+        if not isinstance(self.sample_size, int):
+            raise ValueError("sample_size must be an integer")
 
-        asset = _validate_return_records(asset, "asset")
-        benchmark = _validate_return_records(benchmark, "benchmark")
-        aligned = align_timestamp_intersection(asset, benchmark)
+        if self.sample_size < 0:
+            raise ValueError("sample_size must be >= 0")
 
-        output = []
-        for timestamp, (asset_value, benchmark_value) in zip(
-            aligned["aligned_timestamps"], aligned["pairs"]
-        ):
-            output.append(
-                {
-                    "timestamp": timestamp,
-                    "value": asset_value - benchmark_value,
-                    "asset_return": asset_value,
-                    "benchmark_return": benchmark_value,
-                }
-            )
-        return output
+        if self.lag is not None:
+            if not isinstance(self.lag, int):
+                raise ValueError("lag must be an integer or None")
+            if self.lag < 0:
+                raise ValueError("lag must be >= 0")
 
-    n = min(len(asset), len(benchmark))
-    return [
-        float(asset[i]) - float(benchmark[i])
-        for i in range(n)
-    ]
+        if not isinstance(self.causation_claim, bool):
+            raise ValueError("causation_claim must be boolean")
 
+        if not isinstance(self.limitations, tuple):
+            raise ValueError("limitations must be a tuple")
 
-def cumulative_abnormal_return(asset_returns, benchmark_returns):
-    """Calculate cumulative abnormal return.
-
-    For timestamped inputs, returns the sum of abnormal returns over the
-    explicit timestamp intersection. ``None`` is returned when no aligned
-    observations exist.
-    """
-    abnormal = abnormal_returns(asset_returns, benchmark_returns)
-
-    if not abnormal:
-        return None
-
-    if _is_timestamped(abnormal):
-        return sum(float(item["value"]) for item in abnormal)
-
-    return sum(abnormal)
-
-
-def abnormal_return_snapshot(asset_returns, benchmark_returns):
-    """Return an auditable timestamp-aware event-study snapshot.
-
-    This helper is additive and does not alter the legacy functions above.
-    """
-    abnormal = abnormal_returns(asset_returns, benchmark_returns)
-
-    if _is_timestamped(abnormal):
-        timestamps = [item["timestamp"] for item in abnormal]
-        values = [float(item["value"]) for item in abnormal]
+    def as_dict(self) -> dict[str, Any]:
+        """Return a serializable evidence envelope."""
         return {
-            "sample_size": len(values),
-            "timestamp_window": (
-                (timestamps[0], timestamps[-1]) if timestamps else None
-            ),
-            "mean_abnormal_return": mean(values) if values else None,
-            "cumulative_abnormal_return": sum(values) if values else None,
-            "calculation_status": (
-                "calculated" if values else "insufficient_data"
-            ),
-            "causation_claim": False,
+            "symbol": self.symbol,
+            "market": self.market,
+            "timeframe": self.timeframe,
+            "metric": self.metric,
+            "value": self.value,
+            "sample_size": self.sample_size,
+            "source": self.source,
+            "methodology": self.methodology,
+            "timestamp_window": self.timestamp_window,
+            "calculation_method": self.calculation_method,
+            "lag": self.lag,
+            "data_quality": self.data_quality,
+            "data_freshness": self.data_freshness,
+            "causation_claim": self.causation_claim,
+            "status": self.status,
+            "limitations": self.limitations,
         }
 
-    values = [float(item) for item in abnormal]
-    return {
-        "sample_size": len(values),
-        "timestamp_window": None,
-        "mean_abnormal_return": mean(values) if values else None,
-        "cumulative_abnormal_return": sum(values) if values else None,
-        "calculation_status": "calculated" if values else "insufficient_data",
-        "causation_claim": False,
-    }
+
+def build_evidence(
+    *,
+    symbol: str,
+    market: str,
+    timeframe: str,
+    metric: str,
+    value: Any,
+    sample_size: int,
+    source: str,
+    methodology: str,
+    timestamp_window: Any = None,
+    calculation_method: str = "unspecified",
+    lag: int | None = None,
+    data_quality: str = "unknown",
+    data_freshness: str = "unknown",
+    causation_claim: bool = False,
+    status: str = "observed",
+    limitations: tuple[str, ...] = (),
+) -> EvidenceRecord:
+    """Construct a validated immutable evidence record."""
+    return EvidenceRecord(
+        symbol=symbol,
+        market=market,
+        timeframe=timeframe,
+        metric=metric,
+        value=value,
+        sample_size=sample_size,
+        source=source,
+        methodology=methodology,
+        timestamp_window=timestamp_window,
+        calculation_method=calculation_method,
+        lag=lag,
+        data_quality=data_quality,
+        data_freshness=data_freshness,
+        causation_claim=causation_claim,
+        status=status,
+        limitations=limitations,
+    )
 
 
-__all__ = [
-    "abnormal_returns",
-    "cumulative_abnormal_return",
-    "abnormal_return_snapshot",
-]
+__all__ = ["EvidenceRecord", "build_evidence"]
