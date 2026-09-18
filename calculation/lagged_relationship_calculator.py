@@ -1,88 +1,142 @@
-"""
-Timestamp-aware lagged relationship calculations.
-
-Lag convention:
-
-    market[t] -> company[t + lag]
-
-lag=0:
-    equal timestamps are paired.
-
-lag=1:
-    each market observation is paired with the next company
-    observation in chronological order.
-
-Important:
-- No positional pairing without timestamp alignment.
-- No silent truncation.
-- Timestamps must be timezone-aware.
-- Duplicate timestamps are rejected.
-- Input order does not determine alignment.
-"""
-
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import sqrt
-from typing import Any, Iterable, Mapping, Sequence
+from math import isfinite, sqrt
+from typing import Iterable, Mapping, Sequence
 
 
-def _timestamp(value: Any) -> datetime:
+@dataclass(frozen=True)
+class RelationshipResult:
+    """
+    Auditable relationship-calculation result.
+
+    Correlation describes statistical association only.
+    It does not establish causation.
+    """
+
+    market: str
+    company: str
+    correlation: float | None
+    sample_size: int
+    aligned_timestamps: tuple[datetime, ...]
+    company_mean_return: float | None
+    market_mean_return: float | None
+    excess_mean_return: float | None
+    calculation_method: str
+    causation_claim: bool = False
+
+    def validate(self) -> None:
+        if not self.market:
+            raise ValueError("market must be non-empty")
+
+        if not self.company:
+            raise ValueError("company must be non-empty")
+
+        if self.sample_size < 0:
+            raise ValueError("sample_size must be non-negative")
+
+        if self.sample_size != len(self.aligned_timestamps):
+            raise ValueError(
+                "sample_size must equal aligned_timestamps length"
+            )
+
+        for ts in self.aligned_timestamps:
+            if not isinstance(ts, datetime):
+                raise TypeError("timestamps must be datetime objects")
+
+            if ts.tzinfo is None or ts.utcoffset() is None:
+                raise ValueError(
+                    "timestamp must be timezone-aware UTC timestamp"
+                )
+
+            if ts.astimezone(timezone.utc) != ts:
+                raise ValueError("timestamps must be normalized to UTC")
+
+        for value in (
+            self.correlation,
+            self.company_mean_return,
+            self.market_mean_return,
+            self.excess_mean_return,
+        ):
+            if value is not None and not isfinite(float(value)):
+                raise ValueError("result values must be finite")
+
+        if self.causation_claim:
+            raise ValueError(
+                "RelationshipResult must not claim causation"
+            )
+
+
+def _utc_timestamp(value: datetime) -> datetime:
+    """
+    Normalize a timezone-aware datetime to UTC.
+    """
     if not isinstance(value, datetime):
         raise TypeError("timestamp must be a datetime")
 
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(
-            "timestamp must be a timezone-aware UTC timestamp"
+            "timestamp must be timezone-aware UTC timestamp"
         )
 
     return value.astimezone(timezone.utc)
 
 
-def _normalize_observations(
-    observations: Iterable[Mapping[str, Any]],
-) -> list[Mapping[str, Any]]:
-    rows = list(observations)
+def _validate_timestamped_values(
+    observations: Iterable[tuple[datetime, float]],
+    *,
+    name: str,
+) -> dict[datetime, float]:
+    """
+    Validate timestamped numeric observations.
 
-    normalized: list[Mapping[str, Any]] = []
+    No silent sorting, truncation, filling, or duplicate replacement.
+    """
+    result: dict[datetime, float] = {}
 
-    for row in rows:
-        if not isinstance(row, Mapping):
-            raise TypeError("observation must be a mapping")
+    for timestamp, value in observations:
+        ts = _utc_timestamp(timestamp)
 
-        if "timestamp" not in row:
-            raise ValueError("observation requires timestamp")
+        numeric = float(value)
 
-        timestamp = _timestamp(row["timestamp"])
+        if not isfinite(numeric):
+            raise ValueError(f"{name} values must be finite")
 
-        normalized.append(
-            {
-                **row,
-                "timestamp": timestamp,
-            }
-        )
+        if ts in result:
+            raise ValueError(
+                f"duplicate timestamp in {name}: {ts.isoformat()}"
+            )
 
-    normalized.sort(key=lambda row: row["timestamp"])
+        result[ts] = numeric
 
-    timestamps = [row["timestamp"] for row in normalized]
-
-    if len(timestamps) != len(set(timestamps)):
-        raise ValueError("duplicate timestamps are not allowed")
-
-    return normalized
+    return result
 
 
-def _value(row: Mapping[str, Any], field: str) -> float:
-    if field not in row:
-        raise ValueError(f"observation missing {field}")
+def _validate_numeric_series(
+    values: Sequence[float],
+    *,
+    name: str,
+) -> tuple[float, ...]:
+    result = tuple(float(value) for value in values)
 
-    return float(row[field])
+    for value in result:
+        if not isfinite(value):
+            raise ValueError(f"{name} values must be finite")
+
+    return result
 
 
 def _pearson(
     x: Sequence[float],
     y: Sequence[float],
 ) -> float | None:
+    """
+    Calculate Pearson correlation.
+
+    Returns None when fewer than two observations are available
+    or either series has zero variance.
+    """
     if len(x) != len(y):
         raise ValueError("series lengths must match")
 
@@ -97,14 +151,17 @@ def _pearson(
         for a, b in zip(x, y)
     )
 
-    denominator_x = sqrt(
-        sum((a - mean_x) ** 2 for a in x)
-    )
-    denominator_y = sqrt(
-        sum((b - mean_y) ** 2 for b in y)
+    variance_x = sum(
+        (a - mean_x) ** 2
+        for a in x
     )
 
-    denominator = denominator_x * denominator_y
+    variance_y = sum(
+        (b - mean_y) ** 2
+        for b in y
+    )
+
+    denominator = sqrt(variance_x * variance_y)
 
     if denominator == 0:
         return None
@@ -112,149 +169,259 @@ def _pearson(
     return numerator / denominator
 
 
-def _lagged_pairs(
-    market: Sequence[Mapping[str, Any]],
-    company: Sequence[Mapping[str, Any]],
-    lag: int,
-) -> list[tuple[Mapping[str, Any], Mapping[str, Any]]]:
+def _timestamp_alignment(
+    company_observations: Mapping[datetime, float],
+    market_observations: Mapping[datetime, float],
+) -> tuple[
+    tuple[datetime, ...],
+    tuple[float, ...],
+    tuple[float, ...],
+]:
     """
-    Build timestamp-aware lagged pairs.
+    Align observations strictly by identical timestamps.
 
-    lag=0:
-        market timestamp == company timestamp
-
-    lag>0:
-        market observation at position i is paired with the company
-        observation at position i + lag, but only when the timestamps
-        satisfy the explicit lagged observation relationship.
-
-    For lag=0, equal timestamp matching is mandatory.
+    Missing timestamps are not fabricated and unmatched observations
+    are not positionally paired.
     """
-    if lag < 0:
-        raise ValueError("lag must be non-negative")
-
-    market_rows = _normalize_observations(market)
-    company_rows = _normalize_observations(company)
-
-    if not market_rows or not company_rows:
-        return []
-
-    if lag == 0:
-        company_by_timestamp = {
-            row["timestamp"]: row
-            for row in company_rows
-        }
-
-        pairs = []
-
-        for market_row in market_rows:
-            timestamp = market_row["timestamp"]
-
-            company_row = company_by_timestamp.get(timestamp)
-
-            if company_row is not None:
-                pairs.append((market_row, company_row))
-
-        return pairs
-
-    pairs = []
-
-    for index, market_row in enumerate(market_rows):
-        company_index = index + lag
-
-        if company_index >= len(company_rows):
-            break
-
-        company_row = company_rows[company_index]
-
-        pairs.append((market_row, company_row))
-
-    return pairs
-
-
-def calculate_lag(
-    market_observations: Iterable[Mapping[str, Any]],
-    company_observations: Iterable[Mapping[str, Any]],
-    lag: int = 0,
-    market_field: str = "close",
-    company_field: str = "close",
-) -> dict[str, Any]:
-    """
-    Calculate one timestamp-aware lag relationship.
-    """
-    if lag < 0:
-        raise ValueError("lag must be non-negative")
-
-    pairs = _lagged_pairs(
-        list(market_observations),
-        list(company_observations),
-        lag,
-    )
-
-    market_values = [
-        _value(market_row, market_field)
-        for market_row, _ in pairs
-    ]
-
-    company_values = [
-        _value(company_row, company_field)
-        for _, company_row in pairs
-    ]
-
-    aligned_timestamps = [
-        (
-            market_row["timestamp"],
-            company_row["timestamp"],
-        )
-        for market_row, company_row in pairs
-    ]
-
-    correlation = _pearson(
-        market_values,
-        company_values,
-    )
-
-    return {
-        "lag": lag,
-        "sample_size": len(pairs),
-        "correlation": correlation,
-        "aligned_timestamps": aligned_timestamps,
-        "causation_claim": False,
+    company_map = {
+        _utc_timestamp(timestamp): float(value)
+        for timestamp, value in company_observations.items()
     }
 
+    market_map = {
+        _utc_timestamp(timestamp): float(value)
+        for timestamp, value in market_observations.items()
+    }
 
-def calculate_lags(
-    market_observations: Iterable[Mapping[str, Any]],
-    company_observations: Iterable[Mapping[str, Any]],
-    lags: Iterable[int],
-    market_field: str = "close",
-    company_field: str = "close",
-) -> list[dict[str, Any]]:
+    common = sorted(
+        set(company_map).intersection(market_map)
+    )
+
+    company_values = tuple(
+        company_map[timestamp]
+        for timestamp in common
+    )
+
+    market_values = tuple(
+        market_map[timestamp]
+        for timestamp in common
+    )
+
+    return (
+        tuple(common),
+        company_values,
+        market_values,
+    )
+
+
+def calculate_market_relationship(
+    company_observations: Iterable[tuple[datetime, float]]
+    | Sequence[float],
+    market_observations: Iterable[tuple[datetime, float]]
+    | Sequence[float],
+    *,
+    company: str = "",
+    market: str = "",
+    benchmark_observations: Iterable[tuple[datetime, float]] | None = None,
+) -> RelationshipResult:
     """
-    Calculate multiple lag relationships.
+    Calculate the relationship between company and market observations.
 
-    Returns results in the exact order supplied by `lags`.
+    Preferred API:
+        timestamped observations
+
+    Example:
+        calculate_market_relationship(
+            company_observations=[
+                (datetime(..., tzinfo=timezone.utc), 0.01),
+                ...
+            ],
+            market_observations=[
+                (datetime(..., tzinfo=timezone.utc), 0.02),
+                ...
+            ],
+            company="TITAN",
+            market="GOLD",
+        )
+
+    Legacy API:
+        numeric sequences remain supported for backward compatibility.
     """
-    market_rows = list(market_observations)
-    company_rows = list(company_observations)
 
-    results = []
+    company_is_timestamped = (
+        not isinstance(company_observations, Sequence)
+        or (
+            len(company_observations) > 0
+            and isinstance(company_observations[0], tuple)
+        )
+    )
 
-    for lag in lags:
-        results.append(
-            calculate_lag(
-                market_rows,
-                company_rows,
-                lag=int(lag),
-                market_field=market_field,
-                company_field=company_field,
+    market_is_timestamped = (
+        not isinstance(market_observations, Sequence)
+        or (
+            len(market_observations) > 0
+            and isinstance(market_observations[0], tuple)
+        )
+    )
+
+    if company_is_timestamped != market_is_timestamped:
+        raise ValueError(
+            "company and market observations must use the same format"
+        )
+
+    if company_is_timestamped:
+        company_map = _validate_timestamped_values(
+            company_observations,  # type: ignore[arg-type]
+            name="company",
+        )
+
+        market_map = _validate_timestamped_values(
+            market_observations,  # type: ignore[arg-type]
+            name="market",
+        )
+
+        timestamps, company_values, market_values = (
+            _timestamp_alignment(
+                company_map,
+                market_map,
             )
         )
 
-    return results
+        company_mean = (
+            sum(company_values) / len(company_values)
+            if company_values
+            else None
+        )
+
+        market_mean = (
+            sum(market_values) / len(market_values)
+            if market_values
+            else None
+        )
+
+        excess_mean = (
+            company_mean - market_mean
+            if company_mean is not None
+            and market_mean is not None
+            else None
+        )
+
+        result = RelationshipResult(
+            market=market,
+            company=company,
+            correlation=_pearson(
+                company_values,
+                market_values,
+            ),
+            sample_size=len(timestamps),
+            aligned_timestamps=timestamps,
+            company_mean_return=company_mean,
+            market_mean_return=market_mean,
+            excess_mean_return=excess_mean,
+            calculation_method=(
+                "timestamp_intersection_pearson"
+            ),
+            causation_claim=False,
+        )
+
+        result.validate()
+        return result
+
+    company_values = _validate_numeric_series(
+        company_observations,  # type: ignore[arg-type]
+        name="company",
+    )
+
+    market_values = _validate_numeric_series(
+        market_observations,  # type: ignore[arg-type]
+        name="market",
+    )
+
+    if len(company_values) != len(market_values):
+        raise ValueError(
+            "company and market series must have equal length"
+        )
+
+    company_mean = (
+        sum(company_values) / len(company_values)
+        if company_values
+        else None
+    )
+
+    market_mean = (
+        sum(market_values) / len(market_values)
+        if market_values
+        else None
+    )
+
+    excess_mean = (
+        company_mean - market_mean
+        if company_mean is not None
+        and market_mean is not None
+        else None
+    )
+
+    result = RelationshipResult(
+        market=market,
+        company=company,
+        correlation=_pearson(
+            company_values,
+            market_values,
+        ),
+        sample_size=len(company_values),
+        aligned_timestamps=tuple(),
+        company_mean_return=company_mean,
+        market_mean_return=market_mean,
+        excess_mean_return=excess_mean,
+        calculation_method="positional_pearson_legacy",
+        causation_claim=False,
+    )
+
+    result.validate()
+    return result
+
+
+def calculate_correlation(
+    company_values: Sequence[float],
+    market_values: Sequence[float],
+) -> float | None:
+    """
+    Backward-compatible numeric correlation helper.
+    """
+    company = _validate_numeric_series(
+        company_values,
+        name="company",
+    )
+
+    market = _validate_numeric_series(
+        market_values,
+        name="market",
+    )
+
+    if len(company) != len(market):
+        raise ValueError(
+            "company and market series must have equal length"
+        )
+
+    return _pearson(company, market)
+
+
+def calculate_timestamped_correlation(
+    company_observations: Iterable[tuple[datetime, float]],
+    market_observations: Iterable[tuple[datetime, float]],
+) -> RelationshipResult:
+    """
+    Convenience API for timestamp-aware relationship calculation.
+    """
+    return calculate_market_relationship(
+        company_observations,
+        market_observations,
+    )
 
 
 __all__ = [
-    "calculate_lag",
-    "calculate_lags",
+    "RelationshipResult",
+    "calculate_market_relationship",
+    "calculate_correlation",
+    "calculate_timestamped_correlation",
 ]
