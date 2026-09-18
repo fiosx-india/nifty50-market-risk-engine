@@ -1,252 +1,173 @@
 """
-Trend Indicators
-================
-
-Production-safe trend indicator calculations.
-
-Responsibilities:
-- ADX / Directional Movement
-- Supertrend inputs
-- Ichimoku components
-
-Rules:
-- No market-specific decisions
-- No BUY / SELL / HOLD decisions
-- No hard-coded market results
-- Deterministic calculations
-- Validate inputs
-- Preserve timestamp/order of observations
+Tests for indicators.trend_indicators
 """
-
-from __future__ import annotations
-
-from typing import Iterable, Sequence
 
 import math
 
+import pytest
 
-Number = float | int
-
-
-def _to_float_series(values: Iterable[Number], name: str) -> list[float]:
-    """Convert an iterable to finite floats without changing order."""
-    result = [float(value) for value in values]
-
-    if not result:
-        raise ValueError(f"{name} must not be empty")
-
-    if any(not math.isfinite(value) for value in result):
-        raise ValueError(f"{name} contains non-finite values")
-
-    return result
+from indicators.trend_indicators import (
+    adx,
+    adx_series,
+    ichimoku,
+    supertrend,
+    supertrend_inputs,
+)
 
 
-def _validate_same_length(
-    high: Sequence[float],
-    low: Sequence[float],
-    close: Sequence[float],
-) -> None:
-    """Validate OHLC series lengths and geometry."""
-    if not (len(high) == len(low) == len(close)):
-        raise ValueError("high, low and close must have equal length")
-
-    if len(high) < 1:
-        raise ValueError("OHLC series must not be empty")
-
-    for i, (h, l, c) in enumerate(zip(high, low, close)):
-        if h < l:
-            raise ValueError(f"high must be >= low at index {i}")
-
-        if not (l <= c <= h):
-            raise ValueError(
-                f"close must be between low and high at index {i}"
-            )
-
-
-def _validate_period(period: int, name: str = "period") -> int:
-    """Validate rolling-window period."""
-    if isinstance(period, bool) or not isinstance(period, int):
-        raise TypeError(f"{name} must be an integer")
-
-    if period <= 0:
-        raise ValueError(f"{name} must be greater than zero")
-
-    return period
-
-
-# ---------------------------------------------------------------------------
-# Directional Movement / ADX
-# ---------------------------------------------------------------------------
-
-
-def _true_range(
-    high: Sequence[float],
-    low: Sequence[float],
-    close: Sequence[float],
-) -> list[float]:
-    """Calculate True Range for every observation."""
-    tr: list[float] = []
-
-    for i in range(len(high)):
-        if i == 0:
-            value = high[i] - low[i]
-        else:
-            value = max(
-                high[i] - low[i],
-                abs(high[i] - close[i - 1]),
-                abs(low[i] - close[i - 1]),
-            )
-
-        tr.append(float(value))
-
-    return tr
-
-
-def _directional_movement(
-    high: Sequence[float],
-    low: Sequence[float],
-) -> tuple[list[float], list[float]]:
-    """Calculate +DM and -DM."""
-    plus_dm: list[float] = [0.0]
-    minus_dm: list[float] = [0.0]
-
-    for i in range(1, len(high)):
-        up_move = high[i] - high[i - 1]
-        down_move = low[i - 1] - low[i]
-
-        if up_move > down_move and up_move > 0:
-            plus_dm.append(float(up_move))
-        else:
-            plus_dm.append(0.0)
-
-        if down_move > up_move and down_move > 0:
-            minus_dm.append(float(down_move))
-        else:
-            minus_dm.append(0.0)
-
-    return plus_dm, minus_dm
-
-
-def _rolling_mean(
-    values: Sequence[float],
-    period: int,
-) -> list[float | None]:
-    """Simple rolling mean with None until enough observations exist."""
-    period = _validate_period(period)
-
-    result: list[float | None] = [None] * len(values)
-
-    if len(values) < period:
-        return result
-
-    for i in range(period - 1, len(values)):
-        window = values[i - period + 1 : i + 1]
-        result[i] = sum(window) / period
-
-    return result
-
-
-def adx_series(
-    high: Iterable[Number],
-    low: Iterable[Number],
-    close: Iterable[Number],
-    period: int = 14,
-) -> dict[str, list[float | None]]:
-    """
-    Calculate ADX, +DI and -DI.
-
-    Returns:
-        {
-            "adx": [...],
-            "plus_di": [...],
-            "minus_di": [...]
-        }
-
-    Values are None until sufficient observations are available.
-    """
-    period = _validate_period(period)
-
-    h = _to_float_series(high, "high")
-    l = _to_float_series(low, "low")
-    c = _to_float_series(close, "close")
-
-    _validate_same_length(h, l, c)
-
-    tr = _true_range(h, l, c)
-    plus_dm, minus_dm = _directional_movement(h, l)
-
-    atr = _rolling_mean(tr, period)
-    plus_dm_avg = _rolling_mean(plus_dm, period)
-    minus_dm_avg = _rolling_mean(minus_dm, period)
-
-    plus_di: list[float | None] = [None] * len(h)
-    minus_di: list[float | None] = [None] * len(h)
-    dx: list[float | None] = [None] * len(h)
-
-    for i in range(len(h)):
-        if (
-            atr[i] is None
-            or plus_dm_avg[i] is None
-            or minus_dm_avg[i] is None
-            or atr[i] == 0
-        ):
-            continue
-
-        pdi = 100.0 * plus_dm_avg[i] / atr[i]
-        mdi = 100.0 * minus_dm_avg[i] / atr[i]
-
-        plus_di[i] = pdi
-        minus_di[i] = mdi
-
-        denominator = pdi + mdi
-
-        if denominator == 0:
-            dx[i] = 0.0
-        else:
-            dx[i] = 100.0 * abs(pdi - mdi) / denominator
-
-    adx: list[float | None] = [None] * len(h)
-
-    valid_dx = [
-        value if value is not None else float("nan")
-        for value in dx
+def sample_ohlc(count=80):
+    close = [
+        100.0 + i * 0.5 + (i % 5) * 0.1
+        for i in range(count)
     ]
 
-    # ADX requires a full period of DX observations.
-    first_dx = period - 1
+    high = [value + 2.0 for value in close]
+    low = [value - 2.0 for value in close]
 
-    if len(h) >= first_dx + period:
-        for i in range(first_dx + period - 1, len(h)):
-            window = valid_dx[i - period + 1 : i + 1]
+    return high, low, close
 
-            if any(math.isnan(value) for value in window):
-                continue
 
-            adx[i] = sum(window) / period
+# ---------------------------------------------------------------------------
+# ADX
+# ---------------------------------------------------------------------------
 
-    return {
-        "adx": adx,
-        "plus_di": plus_di,
-        "minus_di": minus_di,
+
+def test_adx_series_returns_expected_keys():
+    high, low, close = sample_ohlc()
+
+    result = adx_series(
+        high,
+        low,
+        close,
+        period=14,
+    )
+
+    assert set(result) == {
+        "adx",
+        "plus_di",
+        "minus_di",
     }
 
 
-def adx(
-    high: Iterable[Number],
-    low: Iterable[Number],
-    close: Iterable[Number],
-    period: int = 14,
-) -> float | None:
-    """Return the latest available ADX value."""
-    series = adx_series(high, low, close, period)
+def test_adx_series_preserves_input_length():
+    high, low, close = sample_ohlc(80)
 
-    values = series["adx"]
+    result = adx_series(
+        high,
+        low,
+        close,
+        period=14,
+    )
 
-    for value in reversed(values):
-        if value is not None:
-            return float(value)
+    assert len(result["adx"]) == 80
+    assert len(result["plus_di"]) == 80
+    assert len(result["minus_di"]) == 80
 
-    return None
+
+def test_adx_requires_sufficient_history():
+    high, low, close = sample_ohlc(10)
+
+    result = adx_series(
+        high,
+        low,
+        close,
+        period=14,
+    )
+
+    assert all(value is None for value in result["adx"])
+
+
+def test_adx_returns_latest_available_value():
+    high, low, close = sample_ohlc(100)
+
+    result = adx(
+        high,
+        low,
+        close,
+        period=14,
+    )
+
+    assert result is not None
+    assert math.isfinite(result)
+    assert 0.0 <= result <= 100.0
+
+
+def test_adx_short_series_returns_none():
+    high, low, close = sample_ohlc(10)
+
+    result = adx(
+        high,
+        low,
+        close,
+        period=14,
+    )
+
+    assert result is None
+
+
+def test_adx_validates_equal_lengths():
+    high, low, close = sample_ohlc(30)
+
+    with pytest.raises(ValueError):
+        adx(
+            high,
+            low[:-1],
+            close,
+            period=14,
+        )
+
+
+def test_adx_rejects_invalid_ohlc_geometry():
+    high, low, close = sample_ohlc(30)
+
+    high[5] = 90.0
+    low[5] = 100.0
+
+    with pytest.raises(ValueError):
+        adx_series(
+            high,
+            low,
+            close,
+            period=14,
+        )
+
+
+def test_adx_rejects_close_outside_range():
+    high, low, close = sample_ohlc(30)
+
+    close[5] = 200.0
+
+    with pytest.raises(ValueError):
+        adx_series(
+            high,
+            low,
+            close,
+            period=14,
+        )
+
+
+def test_adx_rejects_invalid_period():
+    high, low, close = sample_ohlc(30)
+
+    with pytest.raises(ValueError):
+        adx(
+            high,
+            low,
+            close,
+            period=0,
+        )
+
+
+def test_adx_rejects_boolean_period():
+    high, low, close = sample_ohlc(30)
+
+    with pytest.raises(TypeError):
+        adx(
+            high,
+            low,
+            close,
+            period=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -254,167 +175,177 @@ def adx(
 # ---------------------------------------------------------------------------
 
 
-def supertrend_inputs(
-    high: Iterable[Number],
-    low: Iterable[Number],
-    close: Iterable[Number],
-    period: int = 10,
-    multiplier: float = 3.0,
-) -> dict[str, list[float | None]]:
-    """
-    Calculate Supertrend components.
+def test_supertrend_inputs_returns_expected_keys():
+    high, low, close = sample_ohlc()
 
-    Returns:
-        {
-            "atr": [...],
-            "basic_upper": [...],
-            "basic_lower": [...]
-        }
-
-    This function intentionally returns calculation inputs/components.
-    It does not make a trading decision.
-    """
-    period = _validate_period(period)
-
-    if not math.isfinite(float(multiplier)) or multiplier <= 0:
-        raise ValueError("multiplier must be a finite number greater than zero")
-
-    h = _to_float_series(high, "high")
-    l = _to_float_series(low, "low")
-    c = _to_float_series(close, "close")
-
-    _validate_same_length(h, l, c)
-
-    tr = _true_range(h, l, c)
-    atr = _rolling_mean(tr, period)
-
-    basic_upper: list[float | None] = [None] * len(h)
-    basic_lower: list[float | None] = [None] * len(h)
-
-    for i in range(len(h)):
-        if atr[i] is None:
-            continue
-
-        midpoint = (h[i] + l[i]) / 2.0
-
-        basic_upper[i] = midpoint + multiplier * atr[i]
-        basic_lower[i] = midpoint - multiplier * atr[i]
-
-    return {
-        "atr": atr,
-        "basic_upper": basic_upper,
-        "basic_lower": basic_lower,
-    }
-
-
-def supertrend(
-    high: Iterable[Number],
-    low: Iterable[Number],
-    close: Iterable[Number],
-    period: int = 10,
-    multiplier: float = 3.0,
-) -> dict[str, list[float | None]]:
-    """
-    Calculate the Supertrend line and direction.
-
-    direction:
-        1  = price is above the active Supertrend line
-        -1 = price is below the active Supertrend line
-        None = insufficient data
-    """
-    period = _validate_period(period)
-
-    if not math.isfinite(float(multiplier)) or multiplier <= 0:
-        raise ValueError("multiplier must be a finite number greater than zero")
-
-    h = _to_float_series(high, "high")
-    l = _to_float_series(low, "low")
-    c = _to_float_series(close, "close")
-
-    _validate_same_length(h, l, c)
-
-    components = supertrend_inputs(
-        h,
-        l,
-        c,
-        period=period,
-        multiplier=multiplier,
+    result = supertrend_inputs(
+        high,
+        low,
+        close,
+        period=10,
+        multiplier=3.0,
     )
 
-    atr = components["atr"]
-    basic_upper = components["basic_upper"]
-    basic_lower = components["basic_lower"]
-
-    final_upper: list[float | None] = [None] * len(h)
-    final_lower: list[float | None] = [None] * len(h)
-    line: list[float | None] = [None] * len(h)
-    direction: list[int | None] = [None] * len(h)
-
-    for i in range(len(h)):
-        if (
-            atr[i] is None
-            or basic_upper[i] is None
-            or basic_lower[i] is None
-        ):
-            continue
-
-        if i == 0 or final_upper[i - 1] is None:
-            final_upper[i] = basic_upper[i]
-            final_lower[i] = basic_lower[i]
-            continue
-
-        previous_upper = final_upper[i - 1]
-        previous_lower = final_lower[i - 1]
-        previous_close = c[i - 1]
-
-        final_upper[i] = (
-            basic_upper[i]
-            if basic_upper[i] < previous_upper
-            or previous_close > previous_upper
-            else previous_upper
-        )
-
-        final_lower[i] = (
-            basic_lower[i]
-            if basic_lower[i] > previous_lower
-            or previous_close < previous_lower
-            else previous_lower
-        )
-
-        previous_line = line[i - 1]
-        previous_direction = direction[i - 1]
-
-        if previous_line is None:
-            if c[i] <= final_upper[i]:
-                line[i] = final_upper[i]
-                direction[i] = -1
-            else:
-                line[i] = final_lower[i]
-                direction[i] = 1
-
-        elif previous_direction == -1:
-            if c[i] > final_upper[i]:
-                line[i] = final_lower[i]
-                direction[i] = 1
-            else:
-                line[i] = final_upper[i]
-                direction[i] = -1
-
-        else:
-            if c[i] < final_lower[i]:
-                line[i] = final_upper[i]
-                direction[i] = -1
-            else:
-                line[i] = final_lower[i]
-                direction[i] = 1
-
-    return {
-        "atr": atr,
-        "final_upper": final_upper,
-        "final_lower": final_lower,
-        "supertrend": line,
-        "direction": direction,
+    assert set(result) == {
+        "atr",
+        "basic_upper",
+        "basic_lower",
     }
+
+
+def test_supertrend_inputs_preserves_length():
+    high, low, close = sample_ohlc(60)
+
+    result = supertrend_inputs(
+        high,
+        low,
+        close,
+        period=10,
+        multiplier=3.0,
+    )
+
+    assert len(result["atr"]) == 60
+    assert len(result["basic_upper"]) == 60
+    assert len(result["basic_lower"]) == 60
+
+
+def test_supertrend_requires_period_history_for_atr():
+    high, low, close = sample_ohlc(5)
+
+    result = supertrend_inputs(
+        high,
+        low,
+        close,
+        period=10,
+    )
+
+    assert all(value is None for value in result["atr"])
+    assert all(value is None for value in result["basic_upper"])
+    assert all(value is None for value in result["basic_lower"])
+
+
+def test_supertrend_basic_bands_are_ordered():
+    high, low, close = sample_ohlc(60)
+
+    result = supertrend_inputs(
+        high,
+        low,
+        close,
+        period=10,
+        multiplier=3.0,
+    )
+
+    for upper, lower in zip(
+        result["basic_upper"],
+        result["basic_lower"],
+    ):
+        if upper is None or lower is None:
+            continue
+
+        assert upper >= lower
+
+
+def test_supertrend_returns_expected_keys():
+    high, low, close = sample_ohlc(80)
+
+    result = supertrend(
+        high,
+        low,
+        close,
+        period=10,
+        multiplier=3.0,
+    )
+
+    assert set(result) == {
+        "atr",
+        "final_upper",
+        "final_lower",
+        "supertrend",
+        "direction",
+    }
+
+
+def test_supertrend_preserves_length():
+    high, low, close = sample_ohlc(80)
+
+    result = supertrend(
+        high,
+        low,
+        close,
+        period=10,
+        multiplier=3.0,
+    )
+
+    for key in result:
+        assert len(result[key]) == 80
+
+
+def test_supertrend_direction_is_valid():
+    high, low, close = sample_ohlc(100)
+
+    result = supertrend(
+        high,
+        low,
+        close,
+        period=10,
+        multiplier=3.0,
+    )
+
+    directions = [
+        value
+        for value in result["direction"]
+        if value is not None
+    ]
+
+    assert directions
+    assert all(value in (-1, 1) for value in directions)
+
+
+def test_supertrend_line_is_finite_when_available():
+    high, low, close = sample_ohlc(100)
+
+    result = supertrend(
+        high,
+        low,
+        close,
+        period=10,
+        multiplier=3.0,
+    )
+
+    values = [
+        value
+        for value in result["supertrend"]
+        if value is not None
+    ]
+
+    assert values
+    assert all(math.isfinite(value) for value in values)
+
+
+def test_supertrend_rejects_invalid_multiplier():
+    high, low, close = sample_ohlc(50)
+
+    with pytest.raises(ValueError):
+        supertrend(
+            high,
+            low,
+            close,
+            period=10,
+            multiplier=0,
+        )
+
+
+def test_supertrend_rejects_negative_multiplier():
+    high, low, close = sample_ohlc(50)
+
+    with pytest.raises(ValueError):
+        supertrend(
+            high,
+            low,
+            close,
+            period=10,
+            multiplier=-1,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -422,86 +353,164 @@ def supertrend(
 # ---------------------------------------------------------------------------
 
 
-def ichimoku(
-    high: Iterable[Number],
-    low: Iterable[Number],
-    close: Iterable[Number],
-    conversion_period: int = 9,
-    base_period: int = 26,
-    leading_span_b_period: int = 52,
-) -> dict[str, list[float | None]]:
-    """
-    Calculate Ichimoku components.
+def test_ichimoku_returns_expected_keys():
+    high, low, close = sample_ohlc(100)
 
-    Components:
-        conversion_line
-        base_line
-        leading_span_a
-        leading_span_b
-
-    The function keeps all returned arrays aligned with the input
-    observation index. No implicit positional shifting is performed.
-    """
-    conversion_period = _validate_period(
-        conversion_period,
-        "conversion_period",
-    )
-    base_period = _validate_period(
-        base_period,
-        "base_period",
-    )
-    leading_span_b_period = _validate_period(
-        leading_span_b_period,
-        "leading_span_b_period",
+    result = ichimoku(
+        high,
+        low,
+        close,
     )
 
-    h = _to_float_series(high, "high")
-    l = _to_float_series(low, "low")
-    c = _to_float_series(close, "close")
-
-    _validate_same_length(h, l, c)
-
-    n = len(h)
-
-    conversion: list[float | None] = [None] * n
-    base: list[float | None] = [None] * n
-    span_a: list[float | None] = [None] * n
-    span_b: list[float | None] = [None] * n
-
-    for i in range(n):
-        if i + 1 >= conversion_period:
-            start = i - conversion_period + 1
-            highest = max(h[start : i + 1])
-            lowest = min(l[start : i + 1])
-            conversion[i] = (highest + lowest) / 2.0
-
-        if i + 1 >= base_period:
-            start = i - base_period + 1
-            highest = max(h[start : i + 1])
-            lowest = min(l[start : i + 1])
-            base[i] = (highest + lowest) / 2.0
-
-        if conversion[i] is not None and base[i] is not None:
-            span_a[i] = (conversion[i] + base[i]) / 2.0
-
-        if i + 1 >= leading_span_b_period:
-            start = i - leading_span_b_period + 1
-            highest = max(h[start : i + 1])
-            lowest = min(l[start : i + 1])
-            span_b[i] = (highest + lowest) / 2.0
-
-    return {
-        "conversion_line": conversion,
-        "base_line": base,
-        "leading_span_a": span_a,
-        "leading_span_b": span_b,
+    assert set(result) == {
+        "conversion_line",
+        "base_line",
+        "leading_span_a",
+        "leading_span_b",
     }
 
 
-__all__ = [
-    "adx",
-    "adx_series",
-    "supertrend_inputs",
-    "supertrend",
-    "ichimoku",
-]
+def test_ichimoku_preserves_length():
+    high, low, close = sample_ohlc(100)
+
+    result = ichimoku(
+        high,
+        low,
+        close,
+    )
+
+    for values in result.values():
+        assert len(values) == 100
+
+
+def test_ichimoku_conversion_line_uses_conversion_period():
+    high, low, close = sample_ohlc(20)
+
+    result = ichimoku(
+        high,
+        low,
+        close,
+        conversion_period=9,
+        base_period=26,
+        leading_span_b_period=52,
+    )
+
+    assert all(
+        value is None
+        for value in result["conversion_line"][:8]
+    )
+
+    assert result["conversion_line"][8] is not None
+
+
+def test_ichimoku_base_line_requires_base_period():
+    high, low, close = sample_ohlc(30)
+
+    result = ichimoku(
+        high,
+        low,
+        close,
+        conversion_period=9,
+        base_period=26,
+        leading_span_b_period=52,
+    )
+
+    assert all(
+        value is None
+        for value in result["base_line"][:25]
+    )
+
+    assert result["base_line"][25] is not None
+
+
+def test_ichimoku_span_b_requires_longer_period():
+    high, low, close = sample_ohlc(60)
+
+    result = ichimoku(
+        high,
+        low,
+        close,
+        conversion_period=9,
+        base_period=26,
+        leading_span_b_period=52,
+    )
+
+    assert all(
+        value is None
+        for value in result["leading_span_b"][:51]
+    )
+
+    assert result["leading_span_b"][51] is not None
+
+
+def test_ichimoku_span_a_requires_both_lines():
+    high, low, close = sample_ohlc(30)
+
+    result = ichimoku(
+        high,
+        low,
+        close,
+        conversion_period=9,
+        base_period=26,
+        leading_span_b_period=52,
+    )
+
+    assert all(
+        value is None
+        for value in result["leading_span_a"][:25]
+    )
+
+    assert result["leading_span_a"][25] is not None
+
+
+def test_ichimoku_values_are_finite():
+    high, low, close = sample_ohlc(100)
+
+    result = ichimoku(
+        high,
+        low,
+        close,
+    )
+
+    for values in result.values():
+        for value in values:
+            if value is not None:
+                assert math.isfinite(value)
+
+
+def test_ichimoku_validates_equal_lengths():
+    high, low, close = sample_ohlc(50)
+
+    with pytest.raises(ValueError):
+        ichimoku(
+            high,
+            low[:-1],
+            close,
+        )
+
+
+def test_ichimoku_rejects_invalid_period():
+    high, low, close = sample_ohlc(50)
+
+    with pytest.raises(ValueError):
+        ichimoku(
+            high,
+            low,
+            close,
+            conversion_period=0,
+        )
+
+
+def test_ichimoku_does_not_shift_output_length():
+    high, low, close = sample_ohlc(120)
+
+    result = ichimoku(
+        high,
+        low,
+        close,
+    )
+
+    assert all(
+        len(values) == len(close)
+        for values in result.values()
+    )
