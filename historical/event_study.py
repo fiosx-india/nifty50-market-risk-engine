@@ -1,156 +1,216 @@
-"""Timestamp-aware abnormal-return event study.
+"""
+Timestamp-aware event study calculations.
 
-This module preserves the legacy numeric-sequence API while adding the
-canonical timestamp-aware alignment contract.
-
-For timestamped observations, asset and benchmark returns are aligned by
-exact UTC timestamp intersection. Missing observations are retained as gaps;
-they are never filled, positionally paired, silently truncated, or sorted by
-this module. Correlation/causation conclusions are outside this module.
+Architecture rules:
+- Observations are aligned by explicit timestamps.
+- Naive timestamps are rejected.
+- All timestamps are normalized to UTC.
+- Mismatched timestamp sets are NOT silently truncated.
+- Event-study calculations must operate on an explicit common
+  timestamp set.
+- No causation claim is produced by this module.
 """
 
 from __future__ import annotations
 
-from statistics import mean
-from typing import Any, Mapping
-
-from calculation.timestamp_alignment import (
-    TimestampAlignmentError,
-    align_timestamp_intersection,
-)
+from datetime import datetime, timezone
+from typing import Any, Iterable, Mapping, Sequence
 
 
-def _is_timestamped(values: Any) -> bool:
-    return bool(values) and isinstance(values[0], Mapping)
+def _timestamp(value: Any) -> datetime:
+    """Validate and normalize a timestamp to UTC."""
+    if not isinstance(value, datetime):
+        raise TypeError("timestamp must be a datetime")
+
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(
+            "timestamp must be a timezone-aware UTC timestamp"
+        )
+
+    return value.astimezone(timezone.utc)
 
 
-def _validate_return_records(records, name: str):
-    """Validate timestamped return records and return a concrete list."""
-    items = list(records)
-    if not items:
-        return []
+def _normalize(
+    observations: Iterable[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Normalize and chronologically sort timestamped observations."""
+    rows = list(observations)
 
-    # Reuse the canonical timestamp/alignment validation by pairing later.
-    for index, item in enumerate(items):
-        if not isinstance(item, Mapping):
-            raise TimestampAlignmentError(
-                f"{name}[{index}] must be a timestamped return observation"
-            )
-        if "timestamp" not in item or "value" not in item:
-            raise TimestampAlignmentError(
-                f"{name}[{index}] requires timestamp and value"
-            )
-        try:
-            value = float(item["value"])
-        except (TypeError, ValueError) as exc:
-            raise TimestampAlignmentError(
-                f"{name}[{index}] value must be numeric"
-            ) from exc
-        if not (value == value and abs(value) != float("inf")):
-            raise TimestampAlignmentError(
-                f"{name}[{index}] value must be finite"
-            )
-    return items
+    normalized: list[Mapping[str, Any]] = []
+
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise TypeError("observation must be a mapping")
+
+        if "timestamp" not in row:
+            raise ValueError("observation requires timestamp")
+
+        timestamp = _timestamp(row["timestamp"])
+
+        normalized.append(
+            {
+                **row,
+                "timestamp": timestamp,
+            }
+        )
+
+    normalized.sort(key=lambda row: row["timestamp"])
+
+    timestamps = [row["timestamp"] for row in normalized]
+
+    if len(timestamps) != len(set(timestamps)):
+        raise ValueError("duplicate timestamps are not allowed")
+
+    return normalized
 
 
-def abnormal_returns(asset_returns, benchmark_returns):
-    """Calculate asset minus benchmark return.
+def _timestamp_set(
+    observations: Sequence[Mapping[str, Any]],
+) -> set[datetime]:
+    return {
+        row["timestamp"]
+        for row in observations
+    }
 
-    Legacy numeric inputs return ``list[float]``.
 
-    Timestamped inputs return observations containing:
-    ``timestamp``, ``value``, and the aligned asset/benchmark returns.
-    Alignment is an exact timestamp intersection.
+def _validate_matching_timestamps(
+    left: Sequence[Mapping[str, Any]],
+    right: Sequence[Mapping[str, Any]],
+) -> None:
     """
-    asset = list(asset_returns)
-    benchmark = list(benchmark_returns)
+    Require exact timestamp-set equality.
 
-    timestamped = _is_timestamped(asset) or _is_timestamped(benchmark)
-    if timestamped:
-        if not (_is_timestamped(asset) and _is_timestamped(benchmark)):
-            raise TimestampAlignmentError(
-                "asset and benchmark observations must both be timestamped"
-            )
-
-        asset = _validate_return_records(asset, "asset")
-        benchmark = _validate_return_records(benchmark, "benchmark")
-        aligned = align_timestamp_intersection(asset, benchmark)
-
-        output = []
-        for timestamp, (asset_value, benchmark_value) in zip(
-            aligned["aligned_timestamps"], aligned["pairs"]
-        ):
-            output.append(
-                {
-                    "timestamp": timestamp,
-                    "value": asset_value - benchmark_value,
-                    "asset_return": asset_value,
-                    "benchmark_return": benchmark_value,
-                }
-            )
-        return output
-
-    n = min(len(asset), len(benchmark))
-    return [
-        float(asset[i]) - float(benchmark[i])
-        for i in range(n)
-    ]
-
-
-def cumulative_abnormal_return(asset_returns, benchmark_returns):
-    """Calculate cumulative abnormal return.
-
-    For timestamped inputs, returns the sum of abnormal returns over the
-    explicit timestamp intersection. ``None`` is returned when no aligned
-    observations exist.
+    We deliberately do not silently intersect or truncate here.
     """
-    abnormal = abnormal_returns(asset_returns, benchmark_returns)
+    left_timestamps = _timestamp_set(left)
+    right_timestamps = _timestamp_set(right)
 
-    if not abnormal:
+    if left_timestamps != right_timestamps:
+        missing_from_right = sorted(
+            left_timestamps - right_timestamps
+        )
+        missing_from_left = sorted(
+            right_timestamps - left_timestamps
+        )
+
+        raise ValueError(
+            "mismatched timestamp sets: "
+            f"missing_from_right={missing_from_right}, "
+            f"missing_from_left={missing_from_left}"
+        )
+
+
+def _value(
+    row: Mapping[str, Any],
+    field: str,
+) -> float:
+    if field not in row:
+        raise ValueError(
+            f"observation missing {field}"
+        )
+
+    return float(row[field])
+
+
+def _mean(values: Sequence[float]) -> float | None:
+    if not values:
         return None
 
-    if _is_timestamped(abnormal):
-        return sum(float(item["value"]) for item in abnormal)
-
-    return sum(abnormal)
+    return sum(values) / len(values)
 
 
-def abnormal_return_snapshot(asset_returns, benchmark_returns):
-    """Return an auditable timestamp-aware event-study snapshot.
-
-    This helper is additive and does not alter the legacy functions above.
+def _abnormal_return(
+    company_return: float,
+    benchmark_return: float,
+) -> float:
     """
-    abnormal = abnormal_returns(asset_returns, benchmark_returns)
+    Simple abnormal-return calculation.
 
-    if _is_timestamped(abnormal):
-        timestamps = [item["timestamp"] for item in abnormal]
-        values = [float(item["value"]) for item in abnormal]
-        return {
-            "sample_size": len(values),
-            "timestamp_window": (
-                (timestamps[0], timestamps[-1]) if timestamps else None
-            ),
-            "mean_abnormal_return": mean(values) if values else None,
-            "cumulative_abnormal_return": sum(values) if values else None,
-            "calculation_status": (
-                "calculated" if values else "insufficient_data"
-            ),
-            "causation_claim": False,
-        }
+    AR = company return - benchmark return
+    """
+    return company_return - benchmark_return
 
-    values = [float(item) for item in abnormal]
+
+def calculate_abnormal_returns(
+    company_observations: Iterable[Mapping[str, Any]],
+    benchmark_observations: Iterable[Mapping[str, Any]],
+    company_field: str = "return",
+    benchmark_field: str = "return",
+) -> dict[str, Any]:
+    """
+    Calculate timestamp-aligned abnormal returns.
+
+    The two input series must have exactly the same timestamp set.
+    """
+    company = _normalize(company_observations)
+    benchmark = _normalize(benchmark_observations)
+
+    _validate_matching_timestamps(
+        company,
+        benchmark,
+    )
+
+    benchmark_by_timestamp = {
+        row["timestamp"]: row
+        for row in benchmark
+    }
+
+    aligned_timestamps: list[datetime] = []
+    abnormal_returns: list[float] = []
+
+    for company_row in company:
+        timestamp = company_row["timestamp"]
+        benchmark_row = benchmark_by_timestamp[timestamp]
+
+        company_return = _value(
+            company_row,
+            company_field,
+        )
+
+        benchmark_return = _value(
+            benchmark_row,
+            benchmark_field,
+        )
+
+        abnormal_returns.append(
+            _abnormal_return(
+                company_return,
+                benchmark_return,
+            )
+        )
+
+        aligned_timestamps.append(timestamp)
+
     return {
-        "sample_size": len(values),
-        "timestamp_window": None,
-        "mean_abnormal_return": mean(values) if values else None,
-        "cumulative_abnormal_return": sum(values) if values else None,
-        "calculation_status": "calculated" if values else "insufficient_data",
+        "abnormal_returns": abnormal_returns,
+        "aligned_timestamps": aligned_timestamps,
+        "sample_size": len(abnormal_returns),
+        "mean_abnormal_return": _mean(abnormal_returns),
+        "calculation_method": (
+            "company_return - benchmark_return"
+        ),
         "causation_claim": False,
     }
 
 
+def event_study(
+    company_observations: Iterable[Mapping[str, Any]],
+    benchmark_observations: Iterable[Mapping[str, Any]],
+    company_field: str = "return",
+    benchmark_field: str = "return",
+) -> dict[str, Any]:
+    """
+    Compatibility wrapper around calculate_abnormal_returns().
+    """
+    return calculate_abnormal_returns(
+        company_observations=company_observations,
+        benchmark_observations=benchmark_observations,
+        company_field=company_field,
+        benchmark_field=benchmark_field,
+    )
+
+
 __all__ = [
-    "abnormal_returns",
-    "cumulative_abnormal_return",
-    "abnormal_return_snapshot",
+    "calculate_abnormal_returns",
+    "event_study",
 ]
