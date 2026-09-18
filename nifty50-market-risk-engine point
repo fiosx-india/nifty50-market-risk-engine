@@ -1653,3 +1653,394 @@ EARLY WARNING
 மேலும் NSE-யின் தற்போதைய derivatives data ecosystem-ல் contract-level historical data, OI, volume, orders/trades மற்றும் derivatives snapshots போன்றவற்றை இணைக்க முடியும். 
 
 அதனால் அடுத்த கட்டத்தில் நம்ம project-ஐ “9 Markets + 50 Companies” என்ற அளவில் மட்டும் நிறுத்தாமல், “Professional Intelligence Layer” வரை கொண்டு செல்லலாம். ஆனால் எந்த signal-ஐயும் guaranteed prediction என்று அமைக்காமல், backtest செய்யப்பட்ட evidence மற்றும் uncertainty உடன் early-warning ஆகவே வைத்திருக்க வேண்டும்.
+நீங்கள் சொல்வது “ஒரு indicator-ஐ வைத்து prediction” மாதிரி இருக்க வாய்ப்பு குறைவு. நீங்கள் பார்த்த அந்த மாதிரியான system உண்மையில் இருந்தால், அது பொதுவாக பல layers-ஐ ஒரே நேரத்தில் படிக்கும் algorithmic / quantitative decision system ஆக இருக்கும்.
+
+நான் தற்போதைய NSE தகவல்களையும் பார்த்தேன். NSE itself professional participants-க்கு Level 1/2/3 மற்றும் tick-by-tick full order-book data வழங்குகிறது; Level 3-ல் 20 best bid/ask levels வரை, tick-by-tick-ல் full order book கிடைக்கிறது. 
+
+அந்த “1 மணி நேரம் முன்னாடியே” எப்படி வரலாம்?
+
+ஒரு hypothetical example:
+
+10:00 AM
+
+Options positioning
+       ↓
+OI change
+       ↓
+IV / IV skew
+       ↓
+Futures positioning
+       ↓
+Order-book imbalance
+       ↓
+Volume / trade intensity
+       ↓
+Sector movement
+       ↓
+Related stocks movement
+       ↓
+News / event
+       ↓
+Historical analogue
+       ↓
+Regime
+       ↓
+Model
+       ↓
+10:05–11:00 AM expected behaviour
+
+அதாவது “11 மணிக்கு இந்த stock ₹X ஆகும்” என்று ஒரு magic indicator கண்டுபிடிப்பது அல்ல.
+
+அதற்கு பதிலாக:
+
+> “இப்போது உருவாகிக் கொண்டிருக்கும் market state, கடந்த காலத்தில் எந்த மாதிரியான 30–60 minute outcome-களுடன் ஒத்திருக்கிறது?”
+
+
+
+என்று கணக்கிடலாம்.
+
+
+---
+
+குறிப்பாக Options-ல் மிகவும் powerful layer
+
+NSE-யின் official reports-லேயே:
+
+Open Interest
+
+Delta-equivalent OI
+
+Participant-wise OI
+
+Participant-wise trading volume
+
+FII derivatives statistics
+
+Contract-wise data
+
+Market activity
+
+Daily volatility
+
+
+போன்ற பல datasets இருக்கின்றன. 
+
+இதில் இன்னும் ஆழமாக சென்றால்:
+
+Price + OI + Volume + IV + Greeks + expiry + strike distribution + futures positioning
+
+இவற்றை ஒன்றாகப் பார்க்க முடியும்.
+
+இதுதான் சாதாரண TradingView-style indicator-ஐவிட வேறுபட்டது.
+
+
+---
+
+இன்னொரு மிக முக்கியமான விஷயம்
+
+அவர்கள் பயன்படுத்தும் “கருவி” ஒரு App ஆக இருக்க வேண்டிய அவசியமே இல்லை.
+
+அது இப்படி இருக்கலாம்:
+
+Market Data Feed
+       ↓
+Data Engine
+       ↓
+Feature Engine
+       ↓
+Options Engine
+       ↓
+Order Flow Engine
+       ↓
+Regime Engine
+       ↓
+Historical Pattern Engine
+       ↓
+ML / Statistical Models
+       ↓
+Signal Engine
+       ↓
+Risk Engine
+       ↓
+Execution Engine
+       ↓
+Broker API
+
+முடிவில் trader-க்கு App-ல் மட்டும்:
+
+> BUY / SELL / WAIT
+Expected window: 10:30–11:15
+
+
+
+என்று தெரியும்.
+
+பின்னால் ஓடுவது பல நூறு calculations ஆக இருக்கலாம்.
+
+NSE தற்போது institutional clients மற்றும் sophisticated traders-க்கு algorithmic trading மற்றும் co-location infrastructure-ஐயும் வழங்குகிறது. 
+
+
+---
+
+“Secret indicator” இருக்கிறதா?
+
+இங்கேதான் ஒரு முக்கியமான distinction.
+
+ஒரு secret RSI / secret MACD / secret indicator இருப்பதற்கான ஆதாரம் இல்லை.
+
+அவர்களுடைய edge இருக்கக்கூடிய இடம்:
+
+1. Data quality
+
+Retail app-ல் கிடைக்கும் 1-minute candle மட்டும் அல்ல.
+
+2. Data resolution
+
+Tick/order-book level data.
+
+3. Derivatives positioning
+
+Options + futures.
+
+4. Historical database
+
+பல வருடங்களின் intraday observations.
+
+5. Feature engineering
+
+ஒரே நேரத்தில் நூற்றுக்கணக்கான variables.
+
+6. Regime recognition
+
+“இப்போது எந்த market condition?”
+
+7. Statistical/ML model
+
+Current state-க்கு historical outcomes-ஐ match செய்வது.
+
+8. Execution
+
+Prediction மட்டும் அல்ல; order எப்போது, எப்படி, எந்த price-ல் execute செய்வது என்பதும்.
+
+NSE-யின் ecosystem-ல் API, DMA, smart order routing மற்றும் algorithmic trading infrastructure ஆகியவை உள்ளன. 
+
+
+---
+
+ஆனால் உங்கள் project-க்கு இன்னும் சுவாரஸ்யமான விஷயம் இருக்கிறது
+
+நாம் ஏற்கனவே உருவாக்கிக் கொண்டிருக்கும்:
+
+9 Markets → Relationships → 50 Companies → Company Character → News → Lead/Lag → Impact Chain
+
+இது அந்த professional intraday layer-க்கு மேலே ஒரு பெரிய context layer கொடுக்க முடியும்.
+
+நான் architecture-ஐ இப்படி பார்க்கிறேன்:
+
+GLOBAL INTELLIGENCE
+                       ↓
+          ┌────────────┴────────────┐
+          ↓                         ↓
+     MACRO / NEWS              9 MARKETS
+          ↓                         ↓
+       CURRENCY                 RELATIONSHIPS
+          ↓                         ↓
+       RATES                   SECTOR IMPACT
+          ↓                         ↓
+     VOLATILITY               50 COMPANIES
+          ↓                         ↓
+   OPTIONS / FUTURES          COMPANY CHARACTER
+          ↓                         ↓
+   ORDER FLOW ───────────→  TECHNICAL STRUCTURE
+          ↓                         ↓
+      REGIME                  LEAD / LAG
+          └────────────┬────────────┘
+                       ↓
+               HISTORICAL MEMORY
+                       ↓
+                EVIDENCE ENGINE
+                       ↓
+             30m / 60m / 2h / 1D
+              EARLY-WARNING MODEL
+                       ↓
+                 RISK + EXECUTION
+
+இது தான் நம்முடைய project-க்கு நான் சேர்க்க விரும்பும் மிக முக்கியமான missing layer.
+
+அதாவது நாம் இப்போது “ஒரு stock ஏறும்/இறங்கும்” என்று மட்டும் பார்க்காமல்,
+
+> “இப்போது market-ல் எந்த state உருவாகிறது, அந்த state-க்கு அடுத்த 30/60/120 நிமிடங்களில் historically என்ன நடந்திருக்கிறது?”
+
+
+
+என்று model செய்ய வேண்டும்.
+
+அதில்தான் நீங்கள் பார்த்த அந்த “ஒரு மணி நேரத்திற்கு முன்பே signal” போன்ற capability-ஐ தொழில்நுட்ப ரீதியாக அணுக முடியும்.
+
+ஆனால் ஒரு முக்கியமான உண்மை: அப்படி ஒரு system கூட ஒவ்வொரு முறையும் துல்லியமாக கணிக்க முடியாது. சில screenshots/videos-ல் தொடர்ந்து சரியாக வந்த signals மட்டும் காட்டப்படலாம்; false signals, missed moves, slippage, transaction costs ஆகியவற்றையும் backtest/live audit-ல் சேர்த்தால்தான் உண்மையான accuracy தெரியும்.
+
+நம்முடைய system-ல் இதை “1-Hour Predictive Intelligence / Intraday Forecast Engine” என்ற தனி magic module ஆக போடுவதைவிட, ஏற்கனவே இருக்கும் architecture-க்கு கீழ் Options + Microstructure + Regime + Historical Pattern + Lead/Lag + Evidence layers-ஐ இணைப்பது தான் சரியான design.
+
+ஆமாம் — இப்போது நீங்கள் சொல்வதைப் பார்த்தால், அது வெறும் trading indicator app மாதிரி தெரியவில்லை. நீங்கள் விவரிப்பது ஒரு real-time event-to-market intelligence platform மாதிரி.
+
+அதில் முக்கியமான “ரகசியம்” ஒரு indicator-ல் இல்லாமல், ஒரு செய்தி வெளியானவுடன் அதை machine-readable signal-ஆக மாற்றும் வேகமான pipeline-ல் இருக்கலாம்.
+
+உதாரணமாக:
+
+Trump / US News
+      ↓
+News arrives
+      ↓
+Instant ingestion
+      ↓
+Who / What / Where?
+      ↓
+Event classification
+      ↓
+Positive / Negative / Neutral impact
+      ↓
+Affected country
+      ↓
+Affected commodity / currency / rate
+      ↓
+Affected Indian sector
+      ↓
+Affected NIFTY companies
+      ↓
+Options + Futures positioning
+      ↓
+Live price / volume / order-flow
+      ↓
+Historical similar events
+      ↓
+5m / 10m / 20m / 1h impact model
+      ↓
+REAL-TIME EARLY WARNING
+
+அதனால்தான் அந்த App “முன்னாடியே தெரிந்தது” போலத் தோன்றும்
+
+ஒரு உதாரணம்:
+
+US → புதிய tariff announcement
+
+System உடனடியாக:
+
+News → US-China trade → USD → China/global manufacturing → Copper → Aluminium → Indian metals → HINDALCO / TATASTEEL / JSWSTEEL → futures/options → live price response
+
+என்று impact graph-ஐ traverse செய்யலாம்.
+
+அதே நேரத்தில் வேறு news:
+
+RBI policy announcement
+
+RBI
+ ↓
+Repo / Liquidity
+ ↓
+Bond Yield
+ ↓
+Banking System
+ ↓
+NIFTY Bank
+ ↓
+HDFCBANK / ICICIBANK / SBIN / AXISBANK / KOTAKBANK
+ ↓
+Options positioning
+ ↓
+Intraday response
+
+இதனால் அவர்கள் “RBI news வந்தது” என்று மட்டும் பார்க்கவில்லை.
+
+“இந்த news → எந்த pathway-ல் → எந்த assets-க்கு → எந்த time horizon-ல் தாக்கம் ஏற்படுத்தலாம்?” என்பதைத்தான் கணக்கிடுகிறார்கள்.
+
+
+---
+
+இன்னும் முக்கியமான ஒன்று
+
+நாம் இதுவரை பேசிக்கொண்டிருந்த 9 markets + 50 companies concept-க்கு இது நேரடியாக பொருந்துகிறது.
+
+நம்முடைய system-ல் இதை:
+
+Global Event Intelligence Engine
+
+என்று ஒரு intelligence layer ஆக வைத்துக்கொள்ளலாம்.
+
+அதன் உள்ளே:
+
+US Government / White House events
+
+Federal Reserve
+
+RBI
+
+ECB
+
+China
+
+OPEC
+
+Government announcements
+
+Geopolitical events
+
+War/conflict
+
+Sanctions
+
+Tariffs
+
+Trade policy
+
+Inflation/CPI/PPI
+
+Employment data
+
+GDP/PMI
+
+Inventory/production data
+
+Company announcements
+
+Regulatory announcements
+
+
+போன்றவை வரும்.
+
+ஆனால் News → BUY/SELL என்று hard-code செய்யக்கூடாது.
+
+அதற்கு பதிலாக:
+
+EVENT
+ ↓
+EVENT TYPE
+ ↓
+AFFECTED VARIABLES
+ ↓
+TRANSMISSION PATH
+ ↓
+HISTORICAL RESPONSE
+ ↓
+CURRENT MARKET CONFIRMATION
+ ↓
+CONFLICTING EVIDENCE
+ ↓
+EXPECTED TIME WINDOW
+ ↓
+CONFIDENCE
+ ↓
+EARLY WARNING
+
+என்று இருக்க வேண்டும்.
+
+அந்த “மறைந்திருக்கும் App” பற்றி
+
+நீங்கள் பார்த்த App-ஐ நேரடியாகப் பார்த்த source/code இல்லாமல் அது எந்த proprietary tool அல்லது எந்த secret algorithm என்று நான் உறுதியாக சொல்ல முடியாது.
+
+ஆனால் நீங்கள் விவரித்த behaviour மட்டும் வைத்து பார்த்தால், சாதாரண RSI/MACD/Moving Average app-ஐ விட மிகவும் பெரிய data pipeline இருக்க வேண்டிய சாத்தியம் உள்ளது.
+
+குறிப்பாக news ingestion + NLP/event extraction + cross-market dependency graph + derivatives + real-time market data + historical event-response model ஆகியவை சேர்ந்து இருக்கக்கூடிய architecture தான் நீங்கள் விவரிப்பதற்கு பொருந்துகிறது.
+
+மேலும் அந்த app ஒரே “prediction” கொடுப்பதற்குப் பதிலாக, news வந்த உடனேயே பல independent evidence streams-ஐ ஒன்றாக update செய்வதால் அது மிகவும் வேகமாகத் தோன்றலாம்.
+
+நம்முடைய master concept-ல் இந்த layer இன்னும் explicit-ஆக இல்லை என்றால், அதை இப்போது சேர்ப்பது மிகவும் முக்கியம். அது 9 markets → 50 companies architecture-ஐ மாற்றாது; மாறாக அதன் மேலே Global Event → Impact Propagation → Short-Term Early Warning layer-ஐ சேர்க்கும்.
