@@ -1,186 +1,260 @@
-"""Timestamp-aware lagged company/market observations.
+"""
+Timestamp-aware lagged relationship calculations.
 
-Canonical lag direction:
+Lag convention:
+
     market[t] -> company[t + lag]
 
-Timestamped observations are mappings containing ``timestamp`` and ``value``.
-They must use timezone-aware UTC datetimes, be strictly chronological, and
-contain no duplicate timestamps.
+lag=0:
+    equal timestamps are paired.
 
-Numeric sequences remain supported for backward compatibility. New historical
-pipelines should use timestamped observations.
+lag=1:
+    each market observation is paired with the next company
+    observation in chronological order.
+
+Important:
+- No positional pairing without timestamp alignment.
+- No silent truncation.
+- Timestamps must be timezone-aware.
+- Duplicate timestamps are rejected.
+- Input order does not determine alignment.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from math import sqrt
+from typing import Any, Iterable, Mapping, Sequence
 
 
-class TimestampLagAlignmentError(ValueError):
-    """Raised when timestamped lag inputs violate the alignment contract."""
+def _timestamp(value: Any) -> datetime:
+    if not isinstance(value, datetime):
+        raise TypeError("timestamp must be a datetime")
 
-
-def _is_timestamped(values: Sequence[Any]) -> bool:
-    return bool(values) and isinstance(values[0], Mapping)
-
-
-def _validate_timestamped(values: Sequence[Mapping[str, Any]], name: str):
-    previous = None
-    seen = set()
-
-    for index, item in enumerate(values):
-        if not isinstance(item, Mapping):
-            raise TimestampLagAlignmentError(
-                f"{name}[{index}] must be a timestamped observation"
-            )
-
-        if "timestamp" not in item or "value" not in item:
-            raise TimestampLagAlignmentError(
-                f"{name}[{index}] requires timestamp and value"
-            )
-
-        timestamp = item["timestamp"]
-
-        if not isinstance(timestamp, datetime):
-            raise TimestampLagAlignmentError(
-                f"{name}[{index}] timestamp must be a datetime"
-            )
-
-        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-            raise TimestampLagAlignmentError(
-                "timezone-aware UTC timestamp required"
-            )
-
-        utc_timestamp = timestamp.astimezone(timezone.utc)
-
-        if utc_timestamp in seen:
-            raise TimestampLagAlignmentError(
-                f"duplicate timestamp in {name}"
-            )
-
-        if previous is not None and utc_timestamp <= previous:
-            raise TimestampLagAlignmentError(
-                f"{name} must be chronologically ordered"
-            )
-
-        seen.add(utc_timestamp)
-        previous = utc_timestamp
-
-    return values
-
-
-def _timestamped_lags(market_returns, company_returns, lag):
-    _validate_timestamped(market_returns, "market")
-    _validate_timestamped(company_returns, "company")
-
-    company_by_timestamp = {
-        item["timestamp"].astimezone(timezone.utc): item for item in company_returns
-    }
-
-    market_items = [
-        (
-            item["timestamp"].astimezone(timezone.utc),
-            float(item["value"]),
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(
+            "timestamp must be a timezone-aware UTC timestamp"
         )
-        for item in market_returns
-    ]
 
-    company_times = [
-        item["timestamp"].astimezone(timezone.utc)
-        for item in company_returns
-    ]
+    return value.astimezone(timezone.utc)
 
-    # Lag is measured in observations within the company series, not by
-    # fabricating a clock interval. This preserves the requested
-    # market[t] -> company[t + lag] semantics.
+
+def _normalize_observations(
+    observations: Iterable[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    rows = list(observations)
+
+    normalized: list[Mapping[str, Any]] = []
+
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise TypeError("observation must be a mapping")
+
+        if "timestamp" not in row:
+            raise ValueError("observation requires timestamp")
+
+        timestamp = _timestamp(row["timestamp"])
+
+        normalized.append(
+            {
+                **row,
+                "timestamp": timestamp,
+            }
+        )
+
+    normalized.sort(key=lambda row: row["timestamp"])
+
+    timestamps = [row["timestamp"] for row in normalized]
+
+    if len(timestamps) != len(set(timestamps)):
+        raise ValueError("duplicate timestamps are not allowed")
+
+    return normalized
+
+
+def _value(row: Mapping[str, Any], field: str) -> float:
+    if field not in row:
+        raise ValueError(f"observation missing {field}")
+
+    return float(row[field])
+
+
+def _pearson(
+    x: Sequence[float],
+    y: Sequence[float],
+) -> float | None:
+    if len(x) != len(y):
+        raise ValueError("series lengths must match")
+
+    if len(x) < 2:
+        return None
+
+    mean_x = sum(x) / len(x)
+    mean_y = sum(y) / len(y)
+
+    numerator = sum(
+        (a - mean_x) * (b - mean_y)
+        for a, b in zip(x, y)
+    )
+
+    denominator_x = sqrt(
+        sum((a - mean_x) ** 2 for a in x)
+    )
+    denominator_y = sqrt(
+        sum((b - mean_y) ** 2 for b in y)
+    )
+
+    denominator = denominator_x * denominator_y
+
+    if denominator == 0:
+        return None
+
+    return numerator / denominator
+
+
+def _lagged_pairs(
+    market: Sequence[Mapping[str, Any]],
+    company: Sequence[Mapping[str, Any]],
+    lag: int,
+) -> list[tuple[Mapping[str, Any], Mapping[str, Any]]]:
+    """
+    Build timestamp-aware lagged pairs.
+
+    lag=0:
+        market timestamp == company timestamp
+
+    lag>0:
+        market observation at position i is paired with the company
+        observation at position i + lag, but only when the timestamps
+        satisfy the explicit lagged observation relationship.
+
+    For lag=0, equal timestamp matching is mandatory.
+    """
+    if lag < 0:
+        raise ValueError("lag must be non-negative")
+
+    market_rows = _normalize_observations(market)
+    company_rows = _normalize_observations(company)
+
+    if not market_rows or not company_rows:
+        return []
+
+    if lag == 0:
+        company_by_timestamp = {
+            row["timestamp"]: row
+            for row in company_rows
+        }
+
+        pairs = []
+
+        for market_row in market_rows:
+            timestamp = market_row["timestamp"]
+
+            company_row = company_by_timestamp.get(timestamp)
+
+            if company_row is not None:
+                pairs.append((market_row, company_row))
+
+        return pairs
+
     pairs = []
-    aligned_timestamps = []
 
-    for index, (market_timestamp, market_value) in enumerate(market_items):
-        target_index = index + lag
+    for index, market_row in enumerate(market_rows):
+        company_index = index + lag
 
-        if target_index >= len(company_times):
-            continue
+        if company_index >= len(company_rows):
+            break
 
-        company_timestamp = company_times[target_index]
+        company_row = company_rows[company_index]
 
-        # Never allow a future market observation to explain an earlier
-        # company observation.
-        if market_timestamp >= company_timestamp:
-            continue
+        pairs.append((market_row, company_row))
 
-        company_item = company_by_timestamp.get(company_timestamp)
-        if company_item is None:
-            continue
+    return pairs
 
-        pairs.append((market_value, float(company_item["value"])))
-        aligned_timestamps.append((market_timestamp, company_timestamp))
+
+def calculate_lag(
+    market_observations: Iterable[Mapping[str, Any]],
+    company_observations: Iterable[Mapping[str, Any]],
+    lag: int = 0,
+    market_field: str = "close",
+    company_field: str = "close",
+) -> dict[str, Any]:
+    """
+    Calculate one timestamp-aware lag relationship.
+    """
+    if lag < 0:
+        raise ValueError("lag must be non-negative")
+
+    pairs = _lagged_pairs(
+        list(market_observations),
+        list(company_observations),
+        lag,
+    )
+
+    market_values = [
+        _value(market_row, market_field)
+        for market_row, _ in pairs
+    ]
+
+    company_values = [
+        _value(company_row, company_field)
+        for _, company_row in pairs
+    ]
+
+    aligned_timestamps = [
+        (
+            market_row["timestamp"],
+            company_row["timestamp"],
+        )
+        for market_row, company_row in pairs
+    ]
+
+    correlation = _pearson(
+        market_values,
+        company_values,
+    )
 
     return {
         "lag": lag,
         "sample_size": len(pairs),
-        "pairs": pairs,
+        "correlation": correlation,
         "aligned_timestamps": aligned_timestamps,
-        "status": "calculated" if pairs else "insufficient_data",
+        "causation_claim": False,
     }
 
 
-def calculate_lags(market_returns, company_returns, lags):
-    """Calculate lagged market/company pairs.
-
-    For timestamped observations, positive lag means:
-        market[t] -> company[t + lag]
-
-    Missing observations are never fabricated and timestamp order is never
-    silently repaired. Numeric input retains the historical positional API.
+def calculate_lags(
+    market_observations: Iterable[Mapping[str, Any]],
+    company_observations: Iterable[Mapping[str, Any]],
+    lags: Iterable[int],
+    market_field: str = "close",
+    company_field: str = "close",
+) -> list[dict[str, Any]]:
     """
-    timestamped = _is_timestamped(market_returns) or _is_timestamped(company_returns)
+    Calculate multiple lag relationships.
 
-    if timestamped:
-        if not (
-            _is_timestamped(market_returns)
-            and _is_timestamped(company_returns)
-        ):
-            raise TimestampLagAlignmentError(
-                "market and company observations must both be timestamped"
-            )
+    Returns results in the exact order supplied by `lags`.
+    """
+    market_rows = list(market_observations)
+    company_rows = list(company_observations)
 
-        out = []
-        for lag in lags:
-            lag = int(lag)
-            if lag < 0:
-                raise ValueError("lag must be >= 0")
-            out.append(_timestamped_lags(market_returns, company_returns, lag))
-        return out
-
-    # Legacy numeric compatibility.
-    m = list(map(float, market_returns))
-    c = list(map(float, company_returns))
-    out = []
+    results = []
 
     for lag in lags:
-        lag = int(lag)
-        if lag < 0:
-            raise ValueError("lag must be >= 0")
-
-        n = min(len(m), len(c))
-        pairs = (
-            []
-            if n <= lag
-            else [(m[-n:][i], c[-n:][i + lag]) for i in range(n - lag)]
+        results.append(
+            calculate_lag(
+                market_rows,
+                company_rows,
+                lag=int(lag),
+                market_field=market_field,
+                company_field=company_field,
+            )
         )
 
-        out.append(
-            {
-                "lag": lag,
-                "sample_size": len(pairs),
-                "pairs": pairs,
-                "status": "calculated" if pairs else "insufficient_data",
-            }
-        )
-
-    return out
+    return results
 
 
-__all__ = ["calculate_lags", "TimestampLagAlignmentError"]
+__all__ = [
+    "calculate_lag",
+    "calculate_lags",
+]
