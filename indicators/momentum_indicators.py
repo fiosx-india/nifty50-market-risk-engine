@@ -1,107 +1,308 @@
-"""Momentum indicators. Pure measurements; no trading decisions."""
+"""
+Momentum indicators.
+
+Indicators:
+- Stochastic %K / %D
+- Williams %R
+- CCI
+- MFI
+
+The implementations are deterministic and do not introduce trading
+decisions or BUY/SELL logic.
+"""
+
 from __future__ import annotations
-from math import isfinite
 
-_EPS = 1e-12
+from typing import Sequence
 
-def _num(values, name):
-    if values is None:
-        raise ValueError(f"{name} cannot be None")
-    out = []
-    for x in values:
-        if x is None:
-            raise ValueError(f"{name} contains None; alignment must be preserved")
-        try:
-            x = float(x)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"{name} contains non-numeric data") from e
-        if not isfinite(x):
-            raise ValueError(f"{name} contains non-finite data")
-        out.append(x)
-    return out
 
-def _period(period):
-    if isinstance(period, bool) or not isinstance(period, int) or period <= 0:
-        raise ValueError("period must be a positive integer")
-    return period
-
-def _hlc(high, low, close):
-    h, l, c = _num(high, "high"), _num(low, "low"), _num(close, "close")
-    if not (len(h) == len(l) == len(c)):
+def _validate_ohlc(
+    high: Sequence[float],
+    low: Sequence[float],
+    close: Sequence[float],
+) -> tuple[list[float], list[float], list[float]]:
+    if not (len(high) == len(low) == len(close)):
         raise ValueError("high, low and close must have equal lengths")
-    for i, (hi, lo, cl) in enumerate(zip(h, l, c)):
-        if hi < lo or not (lo <= cl <= hi):
-            raise ValueError(f"invalid OHLC at index {i}")
+
+    if not high:
+        return [], [], []
+
+    h = [float(x) for x in high]
+    l = [float(x) for x in low]
+    c = [float(x) for x in close]
+
+    for index, (hi, lo, cl) in enumerate(zip(h, l, c)):
+        if hi < lo:
+            raise ValueError(
+                f"high must be greater than or equal to low at index {index}"
+            )
+
+        if not (lo <= cl <= hi):
+            raise ValueError(
+                f"close must be within high/low range at index {index}"
+            )
+
     return h, l, c
 
-def _stochastic_k(high, low, close, period):
-    p = _period(period)
-    h, l, c = _hlc(high, low, close)
-    if len(c) < p:
-        return []
-    out = []
-    for i in range(p - 1, len(c)):
-        hi, lo = max(h[i-p+1:i+1]), min(l[i-p+1:i+1])
-        out.append(50.0 if hi - lo <= _EPS else 100.0 * (c[i] - lo) / (hi - lo))
-    return out
 
-def stochastic_series(high, low, close, period=14, d_period=3):
-    """Return full stochastic %K and %D series; %D is SMA of %K."""
-    d = _period(d_period)
-    k = _stochastic_k(high, low, close, period)
-    ds = []
-    for i in range(len(k)):
-        w = k[max(0, i-d+1):i+1]
-        ds.append(sum(w) / len(w))
-    return {"k": k, "d": ds}
+def _validate_period(period: int) -> int:
+    period = int(period)
 
-def stochastic(high, low, close, period=14):
-    """Latest stochastic %K."""
-    k = stochastic_series(high, low, close, period)["k"]
-    return k[-1] if k else None
+    if period <= 0:
+        raise ValueError("period must be positive")
 
-def williams_r(high, low, close, period=14):
-    """Latest Williams %R."""
-    p = _period(period)
-    h, l, c = _hlc(high, low, close)
-    if len(c) < p:
+    return period
+
+
+def _window(
+    values: Sequence[float],
+    end: int,
+    period: int,
+) -> Sequence[float] | None:
+    start = end - period + 1
+
+    if start < 0:
         return None
-    hi, lo = max(h[-p:]), min(l[-p:])
-    return -50.0 if hi - lo <= _EPS else -100.0 * (hi - c[-1]) / (hi - lo)
 
-def cci(high, low, close, period=20):
-    """Latest Commodity Channel Index."""
-    p = _period(period)
-    h, l, c = _hlc(high, low, close)
-    if len(c) < p:
+    return values[start : end + 1]
+
+
+def stochastic(
+    high: Sequence[float],
+    low: Sequence[float],
+    close: Sequence[float],
+    period: int = 14,
+) -> float | None:
+    """
+    Return the latest raw Stochastic %K.
+
+    Formula:
+
+        %K = 100 * (Close - LowestLow)
+                   / (HighestHigh - LowestLow)
+
+    The calculation uses the latest `period` observations.
+    """
+    h, l, c = _validate_ohlc(high, low, close)
+    period = _validate_period(period)
+
+    if len(c) < period:
         return None
-    tp = [(hi+lo+cl)/3.0 for hi,lo,cl in zip(h,l,c)]
-    w = tp[-p:]
-    mean = sum(w)/p
-    md = sum(abs(x-mean) for x in w)/p
-    return 0.0 if md <= _EPS else (tp[-1]-mean)/(0.015*md)
 
-def mfi(high, low, close, volume, period=14):
-    """Latest Money Flow Index."""
-    p = _period(period)
-    h, l, c = _hlc(high, low, close)
-    v = _num(volume, "volume")
-    if len(v) != len(c):
-        raise ValueError("volume must have the same length as OHLC")
-    if any(x < 0 for x in v):
-        raise ValueError("volume cannot be negative")
-    if len(c) <= p:
+    highest = max(h[-period:])
+    lowest = min(l[-period:])
+    current_close = c[-1]
+
+    range_ = highest - lowest
+
+    if range_ == 0:
+        return 0.0
+
+    return 100.0 * (current_close - lowest) / range_
+
+
+def stochastic_series(
+    high: Sequence[float],
+    low: Sequence[float],
+    close: Sequence[float],
+    period: int = 14,
+    smooth: int = 3,
+) -> dict[str, list[float | None]]:
+    """
+    Return Stochastic %K and smoothed %D series.
+
+    %K is calculated for every observation where enough history exists.
+
+    %D is the simple moving average of the available %K values over
+    `smooth` observations.
+    """
+    h, l, c = _validate_ohlc(high, low, close)
+    period = _validate_period(period)
+    smooth = _validate_period(smooth)
+
+    k_values: list[float | None] = [None] * len(c)
+
+    for index in range(len(c)):
+        window_high = _window(h, index, period)
+        window_low = _window(l, index, period)
+
+        if window_high is None or window_low is None:
+            continue
+
+        highest = max(window_high)
+        lowest = min(window_low)
+        range_ = highest - lowest
+
+        if range_ == 0:
+            k_values[index] = 0.0
+        else:
+            k_values[index] = (
+                100.0
+                * (c[index] - lowest)
+                / range_
+            )
+
+    d_values: list[float | None] = [None] * len(c)
+
+    for index in range(len(c)):
+        start = index - smooth + 1
+
+        if start < 0:
+            continue
+
+        values = [
+            value
+            for value in k_values[start : index + 1]
+            if value is not None
+        ]
+
+        if len(values) == smooth:
+            d_values[index] = sum(values) / smooth
+
+    return {
+        "k": k_values,
+        "d": d_values,
+    }
+
+
+def williams_r(
+    high: Sequence[float],
+    low: Sequence[float],
+    close: Sequence[float],
+    period: int = 14,
+) -> float | None:
+    """
+    Return the latest Williams %R.
+
+    Formula:
+
+        %R = -100 * (HighestHigh - Close)
+                    / (HighestHigh - LowestLow)
+
+    Standard range is 0 to -100.
+    """
+    h, l, c = _validate_ohlc(high, low, close)
+    period = _validate_period(period)
+
+    if len(c) < period:
         return None
-    tp = [(hi+lo+cl)/3.0 for hi,lo,cl in zip(h,l,c)]
-    pos = neg = 0.0
-    for i in range(len(tp)-p, len(tp)):
-        flow = tp[i] * v[i]
-        if tp[i] > tp[i-1]:
-            pos += flow
-        elif tp[i] < tp[i-1]:
-            neg += flow
-    if neg <= _EPS:
-        return 100.0 if pos > _EPS else 50.0
-    return 100.0 - 100.0/(1.0 + pos/neg)
 
-__all__ = ["stochastic", "stochastic_series", "williams_r", "cci", "mfi"]
+    highest = max(h[-period:])
+    lowest = min(l[-period:])
+    current_close = c[-1]
+
+    range_ = highest - lowest
+
+    if range_ == 0:
+        return 0.0
+
+    return -100.0 * (
+        (highest - current_close) / range_
+    )
+
+
+def cci(
+    high: Sequence[float],
+    low: Sequence[float],
+    close: Sequence[float],
+    period: int = 20,
+) -> float | None:
+    """
+    Commodity Channel Index.
+
+    Uses:
+
+        Typical Price = (H + L + C) / 3
+
+        CCI = (TP - SMA(TP)) / (0.015 * MeanDeviation)
+    """
+    h, l, c = _validate_ohlc(high, low, close)
+    period = _validate_period(period)
+
+    if len(c) < period:
+        return None
+
+    typical = [
+        (hi + lo + cl) / 3.0
+        for hi, lo, cl in zip(h, l, c)
+    ]
+
+    window = typical[-period:]
+    mean = sum(window) / period
+
+    deviation = sum(
+        abs(value - mean)
+        for value in window
+    ) / period
+
+    if deviation == 0:
+        return 0.0
+
+    return (
+        (typical[-1] - mean)
+        / (0.015 * deviation)
+    )
+
+
+def mfi(
+    high: Sequence[float],
+    low: Sequence[float],
+    close: Sequence[float],
+    volume: Sequence[float],
+    period: int = 14,
+) -> float | None:
+    """
+    Money Flow Index.
+
+    Returns the latest MFI value on a 0-100 scale.
+    """
+    h, l, c = _validate_ohlc(high, low, close)
+    period = _validate_period(period)
+
+    if len(volume) != len(c):
+        raise ValueError(
+            "high, low, close and volume must have equal lengths"
+        )
+
+    if len(c) < period + 1:
+        return None
+
+    v = [float(x) for x in volume]
+
+    typical = [
+        (hi + lo + cl) / 3.0
+        for hi, lo, cl in zip(h, l, c)
+    ]
+
+    positive_flow = 0.0
+    negative_flow = 0.0
+
+    start = len(c) - period
+
+    for index in range(start, len(c)):
+        raw_flow = typical[index] * v[index]
+
+        if typical[index] > typical[index - 1]:
+            positive_flow += raw_flow
+        elif typical[index] < typical[index - 1]:
+            negative_flow += raw_flow
+
+    if negative_flow == 0:
+        if positive_flow == 0:
+            return 50.0
+        return 100.0
+
+    money_ratio = positive_flow / negative_flow
+
+    return 100.0 - (
+        100.0 / (1.0 + money_ratio)
+    )
+
+
+__all__ = [
+    "stochastic",
+    "stochastic_series",
+    "williams_r",
+    "cci",
+    "mfi",
+]
