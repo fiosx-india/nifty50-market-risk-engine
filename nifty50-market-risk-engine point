@@ -2044,3 +2044,166 @@ EARLY WARNING
 மேலும் அந்த app ஒரே “prediction” கொடுப்பதற்குப் பதிலாக, news வந்த உடனேயே பல independent evidence streams-ஐ ஒன்றாக update செய்வதால் அது மிகவும் வேகமாகத் தோன்றலாம்.
 
 நம்முடைய master concept-ல் இந்த layer இன்னும் explicit-ஆக இல்லை என்றால், அதை இப்போது சேர்ப்பது மிகவும் முக்கியம். அது 9 markets → 50 companies architecture-ஐ மாற்றாது; மாறாக அதன் மேலே Global Event → Impact Propagation → Short-Term Early Warning layer-ஐ சேர்க்கும்.
+
+ஆமாம். இப்போது நீங்கள் சொல்வது இன்னும் ஒரு level மேலான concept. நான் சரியாகப் புரிந்துகொண்டது இதுதான்:
+
+**“Market ஓடிக்கொண்டிருக்கும்போதே, இப்போது தெரியும் data மட்டும் பார்க்காமல், அடுத்ததாக என்ன event/news/market movement உருவாக வாய்ப்பு இருக்கிறது என்பதை system முன்கூட்டியே கண்டுபிடிக்க முடியுமா? அதை live market-ல் நடப்பதோடு உடனடியாக பொருத்தி, தொடர்ந்து update செய்ய முடியுமா?”**
+
+**ஆம் — இப்படிப்பட்ட architecture உருவாக்க முடியும்.** ஆனால் இது “எதிர்கால செய்தியை மந்திரமாக அறிதல்” அல்ல. Public information, scheduled events, market signals, historical patterns மற்றும் live changes ஆகியவற்றிலிருந்து **எதிர்பார்க்கப்படும் next event / next state**-ஐ estimate செய்வது.
+
+நம்முடைய app-ல் இது மிகவும் powerful ஆக இருக்கும்.
+
+### நான் இதை இரண்டு prediction engines ஆகப் பிரிப்பேன்
+
+```text
+                 LIVE WORLD
+                     │
+          ┌──────────┴──────────┐
+          ↓                     ↓
+   WHAT IS HAPPENING?     WHAT MAY HAPPEN NEXT?
+          ↓                     ↓
+   Live Event Engine       Event Forecast Engine
+          │                     │
+          └──────────┬──────────┘
+                     ↓
+              CROSS-MARKET MAP
+                     ↓
+              9 MARKET STATES
+                     ↓
+             SECTOR PROPAGATION
+                     ↓
+              50 COMPANY STATES
+                     ↓
+          OPTIONS / FUTURES / FLOW
+                     ↓
+              TECHNICAL STATE
+                     ↓
+           HISTORICAL ANALOGUES
+                     ↓
+              EARLY WARNING
+```
+
+### உதாரணமாக
+
+Suppose live market-ல்:
+
+* Crude தொடர்ந்து உயர்கிறது
+* USDINR நகர்கிறது
+* US yields மாற்றம் பெறுகிறது
+* India VIX அதிகரிக்கிறது
+* ஒரு குறிப்பிட்ட sector-ல் unusual volume வருகிறது
+* Options positioning வேகமாக மாறுகிறது
+* அதே நேரத்தில் scheduled US economic event நெருங்குகிறது
+
+நம்ம system:
+
+**“இப்போது என்ன நடந்தது?”** மட்டும் சொல்லாது.
+
+அது:
+
+> **“இந்த தற்போதைய state-க்கு அடுத்ததாக எந்த event/state உருவாகும் வாய்ப்பு அதிகம்?”**
+
+என்று historical data + current evidence மூலம் estimate செய்யும்.
+
+பிறகு அந்த forecast-ஐ live data-வுடன் தொடர்ந்து compare செய்யும்.
+
+```text
+Forecast
+   ↓
+Live observation
+   ↓
+Match?
+   ↓
+YES → confidence strengthens
+NO  → confidence decreases
+   ↓
+New evidence
+   ↓
+Recalculate
+```
+
+இதுதான் நீங்கள் சொல்கிற **“பொருத்தி இருப்பாங்களா?”** என்பதற்கான பதில்.
+
+**ஆமாம் — live observation-ஐ forecast-உடன் continuously match செய்வதே இந்த system-ன் முக்கியமான பகுதியாக இருக்க வேண்டும்.**
+
+### இன்னொரு முக்கியமான upgrade
+
+நாம் ஒரு forecast-ஐ மட்டும் உருவாக்கக்கூடாது.
+
+உதாரணம்:
+
+```text
+Next 5 min
+Next 15 min
+Next 30 min
+Next 60 min
+Next 2 hours
+Next session
+Next day
+```
+
+ஒவ்வொரு horizon-க்கும் தனித்த historical evidence இருக்க வேண்டும்.
+
+அதேபோல்:
+
+```text
+Expected Event
+Expected Market Reaction
+Expected Sector Reaction
+Expected Company Reaction
+Expected Time Window
+Confidence
+Supporting Evidence
+Conflicting Evidence
+```
+
+என்று காட்ட வேண்டும்.
+
+இதனால் app:
+
+**“BUY NOW”**
+
+என்று blind signal கொடுப்பதை விட,
+
+**“இந்த current state-ல் அடுத்த 30–60 minutes-ல் இந்த type of movement/event உருவாகும் historical tendency உள்ளது; தற்போது அதற்கு இந்த evidence support செய்கிறது, ஆனால் இந்த evidence conflict செய்கிறது.”**
+
+என்று explainable early warning கொடுக்கும்.
+
+---
+
+### இதை நம்முடைய existing project-ல் எங்கு வைக்க வேண்டும்?
+
+Architecture-ஐ மாற்ற வேண்டாம்.
+
+நம்முடைய existing:
+
+**9 Markets → Relationship Engine → Sector → 50 Companies → Company Character → Historical → Context → CentralBrain**
+
+இதற்கு மேலாக:
+
+**`Forward Intelligence / Event Forecast Layer`**
+
+என்ற layer சேர்க்கலாம்.
+
+அதன் வேலை:
+
+> **“Current state-லிருந்து next probable state/event என்ன?”**
+
+என்பதை கணக்கிடுவது.
+
+அதற்குக் கீழே இருக்கும் engines:
+
+* Scheduled Event Forecast
+* News/Event Probability
+* Cross-Market State Forecast
+* Lead/Lag Forecast
+* Short-Term Market State Forecast
+* Sector Propagation Forecast
+* Company Impact Forecast
+* Forecast-vs-Live Validation
+* Historical Analogue Matching
+
+இதுதான் நீங்கள் இப்போது தேடிக்கொண்டிருந்த அந்த **“அவங்க app என்ன செய்கிறது என்று புரியவில்லை”** என்ற விஷயத்தை நம்முடைய architecture-ல் வெளிப்படையாக உருவாக்கும் வழி.
+
+ஒரு முக்கியமான வரம்பு மட்டும்: **வர இன்னும் வெளியிடப்படாத ஒரு குறிப்பிட்ட அரசாங்க/நிறுவன news-ஐ public data மட்டும் வைத்து உறுதியாக முன்கூட்டியே தெரிந்துகொள்ள முடியாது.** ஆனால் scheduled events, evolving market conditions, cross-market relationships, news signals மற்றும் historical analogues மூலம் **எந்த வகையான event அல்லது market state அடுத்ததாக உருவாக வாய்ப்பு இருக்கிறது** என்பதை model செய்ய முடியும்.
+
