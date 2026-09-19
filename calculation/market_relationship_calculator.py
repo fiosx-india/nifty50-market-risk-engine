@@ -1,136 +1,498 @@
-"""Historical company/market relationship calculations.
+from datetime import datetime, timedelta, timezone
 
-This module preserves the legacy numeric-sequence API while adding the
-canonical timestamp-aware alignment contract.
+import pytest
 
-For timestamped observations, alignment is performed by exact UTC timestamp
-intersection. No positional pairing, silent truncation, filling, or sorting
-is performed here. Correlation remains an association measure only and never
-claims causation.
-"""
-
-from __future__ import annotations
-
-from statistics import mean
-from typing import Any, Mapping, Sequence
-
-from calculation.timestamp_alignment import (
-    TimestampAlignmentError,
-    align_timestamp_intersection,
+from calculation.market_relationship_calculator import (
+    RelationshipResult,
+    calculate_correlation,
+    calculate_market_relationship,
+    calculate_timestamped_correlation,
 )
 
 
-def _is_timestamped(values: Sequence[Any]) -> bool:
-    return bool(values) and isinstance(values[0], Mapping)
+UTC = timezone.utc
 
 
-def _aligned(a, b):
-    """Legacy positional alignment retained for numeric-only compatibility."""
-    n = min(len(a), len(b))
-    return list(map(float, a[-n:])), list(map(float, b[-n:]))
+def ts(day: int, hour: int = 0) -> datetime:
+    return datetime(
+        2026,
+        1,
+        day,
+        hour,
+        0,
+        0,
+        tzinfo=UTC,
+    )
 
 
-def _pearson(a, b):
-    """Calculate Pearson correlation for already aligned numeric sequences."""
-    n = min(len(a), len(b))
-    if n < 2:
-        return None
+def test_timestamped_relationship_aligns_by_timestamp():
+    company = [
+        (ts(1), 0.01),
+        (ts(2), 0.02),
+        (ts(3), 0.03),
+    ]
 
-    a, b = _aligned(a, b)
-    ma, mb = mean(a), mean(b)
-    da = [x - ma for x in a]
-    db = [x - mb for x in b]
-    den = (sum(x * x for x in da) * sum(x * x for x in db)) ** 0.5
-    return sum(x * y for x, y in zip(da, db)) / den if den else None
+    market = [
+        (ts(1), 0.10),
+        (ts(2), 0.20),
+        (ts(3), 0.30),
+    ]
+
+    result = calculate_market_relationship(
+        company,
+        market,
+        company="TITAN",
+        market="GOLD",
+    )
+
+    assert result.sample_size == 3
+    assert result.aligned_timestamps == (
+        ts(1),
+        ts(2),
+        ts(3),
+    )
+    assert result.correlation == pytest.approx(1.0)
+    assert result.company_mean_return == pytest.approx(0.02)
+    assert result.market_mean_return == pytest.approx(0.20)
+    assert result.excess_mean_return == pytest.approx(-0.18)
+    assert result.causation_claim is False
 
 
-def _calculate_timestamped(market_returns, company_returns, benchmark_returns=None):
-    aligned = align_timestamp_intersection(market_returns, company_returns)
+def test_timestamp_alignment_does_not_use_position():
+    company = [
+        (ts(1), 1.0),
+        (ts(2), 2.0),
+        (ts(3), 3.0),
+    ]
 
-    pairs = aligned["pairs"]
-    result = {
-        "sample_size": aligned["sample_size"],
-        "correlation": _pearson(
-            [pair[0] for pair in pairs],
-            [pair[1] for pair in pairs],
+    market = [
+        (ts(1), 10.0),
+        (ts(3), 30.0),
+        (ts(4), 40.0),
+    ]
+
+    result = calculate_market_relationship(
+        company,
+        market,
+        company="ABC",
+        market="GOLD",
+    )
+
+    assert result.aligned_timestamps == (
+        ts(1),
+        ts(3),
+    )
+
+    assert result.sample_size == 2
+
+
+def test_unmatched_timestamps_are_not_fabricated():
+    company = [
+        (ts(1), 1.0),
+        (ts(2), 2.0),
+    ]
+
+    market = [
+        (ts(3), 3.0),
+        (ts(4), 4.0),
+    ]
+
+    result = calculate_market_relationship(
+        company,
+        market,
+        company="ABC",
+        market="GOLD",
+    )
+
+    assert result.sample_size == 0
+    assert result.aligned_timestamps == ()
+    assert result.correlation is None
+    assert result.company_mean_return is None
+    assert result.market_mean_return is None
+    assert result.excess_mean_return is None
+
+
+def test_duplicate_company_timestamp_is_rejected():
+    company = [
+        (ts(1), 0.01),
+        (ts(1), 0.02),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+        (ts(2), 0.20),
+    ]
+
+    with pytest.raises(ValueError, match="duplicate timestamp"):
+        calculate_market_relationship(company, market)
+
+
+def test_duplicate_market_timestamp_is_rejected():
+    company = [
+        (ts(1), 0.01),
+        (ts(2), 0.02),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+        (ts(1), 0.20),
+    ]
+
+    with pytest.raises(ValueError, match="duplicate timestamp"):
+        calculate_market_relationship(company, market)
+
+
+def test_naive_timestamp_is_rejected():
+    naive = datetime(2026, 1, 1)
+
+    company = [
+        (naive, 0.01),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="timezone-aware UTC timestamp",
+    ):
+        calculate_market_relationship(company, market)
+
+
+def test_non_datetime_timestamp_is_rejected():
+    company = [
+        ("2026-01-01T00:00:00+00:00", 0.01),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+    ]
+
+    with pytest.raises(TypeError, match="timestamp must be a datetime"):
+        calculate_market_relationship(company, market)
+
+
+def test_non_utc_timestamp_is_normalized_to_utc():
+    india_timestamp = datetime(
+        2026,
+        1,
+        1,
+        5,
+        30,
+        0,
+        tzinfo=timezone(timedelta(hours=5, minutes=30)),
+    )
+
+    company = [
+        (india_timestamp, 0.01),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+    ]
+
+    result = calculate_market_relationship(
+        company,
+        market,
+        company="ABC",
+        market="GOLD",
+    )
+
+    assert result.aligned_timestamps == (ts(1),)
+
+
+def test_non_finite_company_value_is_rejected():
+    company = [
+        (ts(1), float("nan")),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+    ]
+
+    with pytest.raises(ValueError, match="finite"):
+        calculate_market_relationship(company, market)
+
+
+def test_non_finite_market_value_is_rejected():
+    company = [
+        (ts(1), 0.01),
+    ]
+
+    market = [
+        (ts(1), float("inf")),
+    ]
+
+    with pytest.raises(ValueError, match="finite"):
+        calculate_market_relationship(company, market)
+
+
+def test_single_observation_has_no_correlation():
+    company = [
+        (ts(1), 0.01),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+    ]
+
+    result = calculate_market_relationship(
+        company,
+        market,
+    )
+
+    assert result.sample_size == 1
+    assert result.correlation is None
+
+
+def test_zero_variance_has_no_correlation():
+    company = [
+        (ts(1), 0.01),
+        (ts(2), 0.01),
+        (ts(3), 0.01),
+    ]
+
+    market = [
+        (ts(1), 0.10),
+        (ts(2), 0.20),
+        (ts(3), 0.30),
+    ]
+
+    result = calculate_market_relationship(
+        company,
+        market,
+    )
+
+    assert result.sample_size == 3
+    assert result.correlation is None
+
+
+def test_negative_correlation():
+    company = [
+        (ts(1), 1.0),
+        (ts(2), 2.0),
+        (ts(3), 3.0),
+    ]
+
+    market = [
+        (ts(1), 3.0),
+        (ts(2), 2.0),
+        (ts(3), 1.0),
+    ]
+
+    result = calculate_market_relationship(
+        company,
+        market,
+    )
+
+    assert result.correlation == pytest.approx(-1.0)
+
+
+def test_timestamped_convenience_function():
+    company = [
+        (ts(1), 1.0),
+        (ts(2), 2.0),
+        (ts(3), 3.0),
+    ]
+
+    market = [
+        (ts(1), 2.0),
+        (ts(2), 4.0),
+        (ts(3), 6.0),
+    ]
+
+    result = calculate_timestamped_correlation(
+        company,
+        market,
+    )
+
+    assert result.correlation == pytest.approx(1.0)
+    assert result.sample_size == 3
+
+
+def test_legacy_numeric_correlation():
+    result = calculate_correlation(
+        [1.0, 2.0, 3.0],
+        [2.0, 4.0, 6.0],
+    )
+
+    assert result == pytest.approx(1.0)
+
+
+def test_legacy_numeric_length_mismatch_is_rejected():
+    with pytest.raises(
+        ValueError,
+        match="equal length",
+    ):
+        calculate_correlation(
+            [1.0, 2.0, 3.0],
+            [1.0, 2.0],
+        )
+
+
+def test_legacy_numeric_relationship():
+    result = calculate_market_relationship(
+        [1.0, 2.0, 3.0],
+        [2.0, 4.0, 6.0],
+        company="ABC",
+        market="GOLD",
+    )
+
+    assert result.correlation == pytest.approx(1.0)
+    assert result.sample_size == 3
+    assert result.company_mean_return == pytest.approx(2.0)
+    assert result.market_mean_return == pytest.approx(4.0)
+    assert result.excess_mean_return == pytest.approx(-2.0)
+    assert result.aligned_timestamps == ()
+    assert result.causation_claim is False
+
+
+def test_mixed_timestamp_and_numeric_formats_are_rejected():
+    company = [
+        (ts(1), 0.01),
+        (ts(2), 0.02),
+    ]
+
+    market = [
+        0.10,
+        0.20,
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="same format",
+    ):
+        calculate_market_relationship(
+            company,
+            market,
+        )
+
+
+def test_relationship_result_validation():
+    result = RelationshipResult(
+        market="GOLD",
+        company="TITAN",
+        correlation=0.5,
+        sample_size=2,
+        aligned_timestamps=(
+            ts(1),
+            ts(2),
         ),
-        "mean_market_return": (
-            mean(pair[0] for pair in pairs) if pairs else None
+        company_mean_return=0.01,
+        market_mean_return=0.02,
+        excess_mean_return=-0.01,
+        calculation_method="timestamp_intersection_pearson",
+        causation_claim=False,
+    )
+
+    result.validate()
+
+
+def test_relationship_result_rejects_causation_claim():
+    result = RelationshipResult(
+        market="GOLD",
+        company="TITAN",
+        correlation=0.5,
+        sample_size=0,
+        aligned_timestamps=(),
+        company_mean_return=None,
+        market_mean_return=None,
+        excess_mean_return=None,
+        calculation_method="test",
+        causation_claim=True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="must not claim causation",
+    ):
+        result.validate()
+
+
+def test_relationship_result_sample_size_must_match_timestamps():
+    result = RelationshipResult(
+        market="GOLD",
+        company="TITAN",
+        correlation=0.5,
+        sample_size=3,
+        aligned_timestamps=(ts(1), ts(2)),
+        company_mean_return=0.01,
+        market_mean_return=0.02,
+        excess_mean_return=-0.01,
+        calculation_method="test",
+        causation_claim=False,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="sample_size must equal",
+    ):
+        result.validate()
+
+
+def test_relationship_result_rejects_naive_timestamp():
+    result = RelationshipResult(
+        market="GOLD",
+        company="TITAN",
+        correlation=None,
+        sample_size=1,
+        aligned_timestamps=(
+            datetime(2026, 1, 1),
         ),
-        "mean_company_return": (
-            mean(pair[1] for pair in pairs) if pairs else None
-        ),
-        "aligned_timestamps": aligned["aligned_timestamps"],
-        "pairs": pairs,
-        "left_count": aligned["left_count"],
-        "right_count": aligned["right_count"],
-        "status": aligned["status"],
-        "causation_claim": False,
-    }
+        company_mean_return=0.01,
+        market_mean_return=0.02,
+        excess_mean_return=-0.01,
+        calculation_method="test",
+        causation_claim=False,
+    )
 
-    if benchmark_returns is not None:
-        benchmark_aligned = align_timestamp_intersection(
-            benchmark_returns,
-            company_returns,
-        )
-        benchmark_pairs = benchmark_aligned["pairs"]
-
-        result["benchmark_aligned_timestamps"] = (
-            benchmark_aligned["aligned_timestamps"]
-        )
-        result["benchmark_pairs"] = benchmark_pairs
-        result["benchmark_excess_return_mean"] = (
-            mean(company - benchmark for benchmark, company in benchmark_pairs)
-            if benchmark_pairs
-            else None
-        )
-
-    return result
+    with pytest.raises(
+        ValueError,
+        match="timezone-aware UTC timestamp",
+    ):
+        result.validate()
 
 
-def calculate(market_returns, company_returns, benchmark_returns=None):
-    """Calculate historical company/market association evidence.
+def test_alignment_is_chronological():
+    company = [
+        (ts(3), 3.0),
+        (ts(1), 1.0),
+        (ts(2), 2.0),
+    ]
 
-    Timestamped input must contain mappings with ``timestamp`` and ``value``.
-    Numeric sequences continue to use the legacy positional API for backward
-    compatibility. New historical pipelines must use timestamped observations.
-    """
-    if _is_timestamped(market_returns) or _is_timestamped(company_returns):
-        if not (
-            _is_timestamped(market_returns)
-            and _is_timestamped(company_returns)
-        ):
-            raise TimestampAlignmentError(
-                "market and company observations must both be timestamped"
-            )
+    market = [
+        (ts(2), 20.0),
+        (ts(3), 30.0),
+        (ts(1), 10.0),
+    ]
 
-        return _calculate_timestamped(
-            market_returns,
-            company_returns,
-            benchmark_returns,
-        )
+    result = calculate_market_relationship(
+        company,
+        market,
+    )
 
-    m, c = _aligned(market_returns, company_returns)
-
-    result = {
-        "sample_size": len(m),
-        "correlation": _pearson(m, c),
-        "mean_market_return": mean(m) if m else None,
-        "mean_company_return": mean(c) if c else None,
-        "causation_claim": False,
-        "status": "calculated" if len(m) >= 2 else "insufficient_data",
-    }
-
-    if benchmark_returns is not None:
-        b, c2 = _aligned(benchmark_returns, company_returns)
-        n = min(len(b), len(c2))
-        result["benchmark_excess_return_mean"] = (
-            mean(c2[-n:][i] - b[-n:][i] for i in range(n))
-            if n
-            else None
-        )
-
-    return result
+    assert result.aligned_timestamps == (
+        ts(1),
+        ts(2),
+        ts(3),
+    )
 
 
-__all__ = ["calculate"]
+def test_result_is_descriptive_not_causal():
+    result = calculate_market_relationship(
+        [
+            (ts(1), 0.01),
+            (ts(2), 0.02),
+            (ts(3), 0.03),
+        ],
+        [
+            (ts(1), 0.02),
+            (ts(2), 0.04),
+            (ts(3), 0.06),
+        ],
+        company="TITAN",
+        market="GOLD",
+    )
+
+    assert result.causation_claim is False
