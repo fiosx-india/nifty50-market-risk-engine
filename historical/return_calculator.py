@@ -1,140 +1,288 @@
-"""Timestamp-aware historical return calculations.
-
-This module preserves the legacy numeric-sequence API while adding the
-canonical timestamped OHLCV contract.
-
-Timestamped input:
-    [{"timestamp": <UTC datetime>, "close": 100, ...}, ...]
-
-Numeric input remains supported for backward compatibility:
-    [100, 110, 121]
-
-Timestamped histories:
-- require timezone-aware UTC timestamps;
-- reject duplicate timestamps;
-- reject unsorted timestamps;
-- reject zero prior close instead of silently dropping the observation;
-- preserve the timestamp belonging to each calculated return;
-- never fill missing timestamps.
-"""
-
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
-
-from calculation.timestamp_alignment import (
-    TimestampAlignmentError,
-    validate_timestamped_series,
-)
+from math import isfinite
+from typing import Iterable, Mapping, Sequence
 
 
-def _is_timestamped(records: Sequence[Any]) -> bool:
-    return bool(records) and isinstance(records[0], Mapping)
+@dataclass(frozen=True)
+class TimestampedReturn:
+    """A single timestamped return observation."""
 
+    timestamp: datetime
+    value: float
+    previous_timestamp: datetime
 
-def _validate_timestamped_ohlcv(records: Sequence[Mapping[str, Any]]):
-    """Validate timestamped OHLCV records and return them unchanged."""
-    validated = validate_timestamped_series(records)
+    def validate(self) -> None:
+        if not isinstance(self.timestamp, datetime):
+            raise ValueError("timestamp must be a datetime")
 
-    for record in validated:
-        if "close" not in record:
-            raise ValueError("each OHLCV observation must contain close")
+        if not isinstance(self.previous_timestamp, datetime):
+            raise ValueError("previous_timestamp must be a datetime")
 
-        try:
-            close = float(record["close"])
-        except (TypeError, ValueError) as exc:
-            raise ValueError("close must be numeric") from exc
-
-        if not (close == close and abs(close) != float("inf")):
-            raise ValueError("close must be finite")
-
-    return validated
-
-
-def simple_returns(close):
-    """Calculate simple returns.
-
-    Timestamped OHLCV input returns timestamped observations:
-
-        [
-            {"timestamp": t1, "value": return_1},
-            ...
-        ]
-
-    Legacy numeric input continues to return numeric values.
-    """
-    records = list(close)
-
-    if not records:
-        return []
-
-    if _is_timestamped(records):
-        validated = _validate_timestamped_ohlcv(records)
-        output = []
-
-        for previous, current in zip(validated, validated[1:]):
-            previous_close = float(previous["close"])
-            current_close = float(current["close"])
-
-            if previous_close == 0:
-                raise ValueError("zero prior close")
-
-            output.append(
-                {
-                    "timestamp": current["timestamp"].astimezone(timezone.utc),
-                    "value": round(current_close / previous_close - 1, 15),
-                }
+        if self.timestamp.tzinfo is None or self.timestamp.utcoffset() is None:
+            raise ValueError(
+                "timestamp must be a timezone-aware UTC timestamp"
             )
 
-        return output
+        if (
+            self.previous_timestamp.tzinfo is None
+            or self.previous_timestamp.utcoffset() is None
+        ):
+            raise ValueError(
+                "previous_timestamp must be a timezone-aware UTC timestamp"
+            )
 
-    values = []
-    for value in records:
-        try:
-            number = float(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("close must be numeric") from exc
+        if self.timestamp.astimezone(timezone.utc) < (
+            self.previous_timestamp.astimezone(timezone.utc)
+        ):
+            raise ValueError(
+                "timestamp cannot be earlier than previous_timestamp"
+            )
 
-        if not (number == number and abs(number) != float("inf")):
-            raise ValueError("close must be finite")
-        values.append(number)
-
-    output = []
-    for previous, current in zip(values, values[1:]):
-        if previous == 0:
-            raise ValueError("zero prior close")
-        output.append(round(current / previous - 1, 15))
-
-    return output
+        if not isfinite(float(self.value)):
+            raise ValueError("return value must be finite")
 
 
-def cumulative_return(close):
-    """Calculate the cumulative return while preserving legacy behavior."""
-    records = list(close)
+def _utc_timestamp(value: datetime) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError("timestamp must be a datetime")
 
-    if not records:
-        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(
+            "timestamp must be a timezone-aware UTC timestamp"
+        )
 
-    if _is_timestamped(records):
-        validated = _validate_timestamped_ohlcv(records)
-        if len(validated) < 2:
-            return None
-
-        first = float(validated[0]["close"])
-        last = float(validated[-1]["close"])
-
-        if first == 0:
-            raise ValueError("zero initial close")
-
-        return round(last / first - 1, 15)
-
-    values = [float(value) for value in records]
-    if len(values) < 2:
-        return None
-    if values[0] == 0:
-        return None
-    return round(values[-1] / values[0] - 1, 15)
+    return value.astimezone(timezone.utc)
 
 
-__all__ = ["simple_returns", "cumulative_return"]
+def _close_from_observation(observation: object) -> float:
+    if isinstance(observation, Mapping):
+        value = observation.get("close")
+    else:
+        value = getattr(observation, "close", None)
+
+    if value is None:
+        raise ValueError("observation is missing close")
+
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("close must be numeric") from exc
+
+    if not isfinite(result):
+        raise ValueError("close must be finite")
+
+    if result <= 0:
+        raise ValueError("close must be greater than zero")
+
+    return result
+
+
+def _timestamp_from_observation(observation: object) -> datetime:
+    if isinstance(observation, Mapping):
+        value = observation.get("timestamp")
+    else:
+        value = getattr(observation, "timestamp", None)
+
+    return _utc_timestamp(value)
+
+
+def _validate_observations(
+    observations: Iterable[object],
+) -> list[tuple[datetime, float]]:
+    rows = [
+        (
+            _timestamp_from_observation(observation),
+            _close_from_observation(observation),
+        )
+        for observation in observations
+    ]
+
+    if not rows:
+        return []
+
+    timestamps = [timestamp for timestamp, _ in rows]
+
+    if len(set(timestamps)) != len(timestamps):
+        raise ValueError("duplicate timestamps are not allowed")
+
+    if timestamps != sorted(timestamps):
+        raise ValueError(
+            "observations must be sorted chronologically"
+        )
+
+    return rows
+
+
+def simple_returns(
+    observations: Iterable[object],
+) -> tuple[TimestampedReturn, ...]:
+    """
+    Calculate simple close-to-close returns.
+
+    return[t] = close[t] / close[t-1] - 1
+
+    The first observation has no return and is therefore omitted.
+    No timestamps are fabricated or silently filled.
+    """
+
+    rows = _validate_observations(observations)
+
+    if len(rows) < 2:
+        return ()
+
+    results: list[TimestampedReturn] = []
+
+    for index in range(1, len(rows)):
+        previous_timestamp, previous_close = rows[index - 1]
+        timestamp, close = rows[index]
+
+        value = close / previous_close - 1.0
+
+        result = TimestampedReturn(
+            timestamp=timestamp,
+            value=value,
+            previous_timestamp=previous_timestamp,
+        )
+
+        result.validate()
+        results.append(result)
+
+    return tuple(results)
+
+
+def logarithmic_returns(
+    observations: Iterable[object],
+) -> tuple[TimestampedReturn, ...]:
+    """
+    Calculate continuously compounded close-to-close returns.
+
+    log_return[t] = ln(close[t] / close[t-1])
+
+    Implemented without silently dropping invalid observations.
+    """
+
+    from math import log
+
+    rows = _validate_observations(observations)
+
+    if len(rows) < 2:
+        return ()
+
+    results: list[TimestampedReturn] = []
+
+    for index in range(1, len(rows)):
+        previous_timestamp, previous_close = rows[index - 1]
+        timestamp, close = rows[index]
+
+        value = log(close / previous_close)
+
+        result = TimestampedReturn(
+            timestamp=timestamp,
+            value=value,
+            previous_timestamp=previous_timestamp,
+        )
+
+        result.validate()
+        results.append(result)
+
+    return tuple(results)
+
+
+def return_map(
+    observations: Iterable[object],
+) -> dict[datetime, float]:
+    """
+    Convert simple returns into a timestamp -> return mapping.
+    """
+
+    results = simple_returns(observations)
+
+    return {
+        result.timestamp: result.value
+        for result in results
+    }
+
+
+def align_returns(
+    company_returns: Sequence[TimestampedReturn],
+    market_returns: Sequence[TimestampedReturn],
+) -> tuple[
+    tuple[datetime, ...],
+    tuple[float, ...],
+    tuple[float, ...],
+]:
+    """
+    Align company and market returns strictly by timestamp.
+
+    No positional pairing.
+    No forward fill.
+    No interpolation.
+    No silent truncation.
+
+    Only timestamps present in both series are returned.
+    """
+
+    company_map = {
+        item.timestamp: float(item.value)
+        for item in company_returns
+    }
+
+    market_map = {
+        item.timestamp: float(item.value)
+        for item in market_returns
+    }
+
+    timestamps = tuple(
+        sorted(set(company_map).intersection(market_map))
+    )
+
+    company_values = tuple(
+        company_map[timestamp]
+        for timestamp in timestamps
+    )
+
+    market_values = tuple(
+        market_map[timestamp]
+        for timestamp in timestamps
+    )
+
+    return timestamps, company_values, market_values
+
+
+def calculate_return_series(
+    observations: Iterable[object],
+    *,
+    method: str = "simple",
+) -> tuple[TimestampedReturn, ...]:
+    """
+    Public return-series entry point.
+
+    Supported methods:
+      - simple
+      - log
+    """
+
+    normalized_method = method.strip().lower()
+
+    if normalized_method == "simple":
+        return simple_returns(observations)
+
+    if normalized_method in {"log", "logarithmic"}:
+        return logarithmic_returns(observations)
+
+    raise ValueError(
+        "unsupported return method; use 'simple' or 'log'"
+    )
+
+
+__all__ = [
+    "TimestampedReturn",
+    "simple_returns",
+    "logarithmic_returns",
+    "return_map",
+    "align_returns",
+    "calculate_return_series",
+]
