@@ -1,498 +1,427 @@
-from datetime import datetime, timedelta, timezone
-
-import pytest
-
-from calculation.market_relationship_calculator import (
-    RelationshipResult,
-    calculate_correlation,
-    calculate_market_relationship,
-    calculate_timestamped_correlation,
-)
-
-
-UTC = timezone.utc
-
-
-def ts(day: int, hour: int = 0) -> datetime:
-    return datetime(
-        2026,
-        1,
-        day,
-        hour,
-        0,
-        0,
-        tzinfo=UTC,
-    )
-
-
-def test_timestamped_relationship_aligns_by_timestamp():
-    company = [
-        (ts(1), 0.01),
-        (ts(2), 0.02),
-        (ts(3), 0.03),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-        (ts(2), 0.20),
-        (ts(3), 0.30),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-        company="TITAN",
-        market="GOLD",
-    )
-
-    assert result.sample_size == 3
-    assert result.aligned_timestamps == (
-        ts(1),
-        ts(2),
-        ts(3),
-    )
-    assert result.correlation == pytest.approx(1.0)
-    assert result.company_mean_return == pytest.approx(0.02)
-    assert result.market_mean_return == pytest.approx(0.20)
-    assert result.excess_mean_return == pytest.approx(-0.18)
-    assert result.causation_claim is False
-
-
-def test_timestamp_alignment_does_not_use_position():
-    company = [
-        (ts(1), 1.0),
-        (ts(2), 2.0),
-        (ts(3), 3.0),
-    ]
-
-    market = [
-        (ts(1), 10.0),
-        (ts(3), 30.0),
-        (ts(4), 40.0),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-        company="ABC",
-        market="GOLD",
-    )
-
-    assert result.aligned_timestamps == (
-        ts(1),
-        ts(3),
-    )
-
-    assert result.sample_size == 2
-
-
-def test_unmatched_timestamps_are_not_fabricated():
-    company = [
-        (ts(1), 1.0),
-        (ts(2), 2.0),
-    ]
-
-    market = [
-        (ts(3), 3.0),
-        (ts(4), 4.0),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-        company="ABC",
-        market="GOLD",
-    )
-
-    assert result.sample_size == 0
-    assert result.aligned_timestamps == ()
-    assert result.correlation is None
-    assert result.company_mean_return is None
-    assert result.market_mean_return is None
-    assert result.excess_mean_return is None
-
-
-def test_duplicate_company_timestamp_is_rejected():
-    company = [
-        (ts(1), 0.01),
-        (ts(1), 0.02),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-        (ts(2), 0.20),
-    ]
-
-    with pytest.raises(ValueError, match="duplicate timestamp"):
-        calculate_market_relationship(company, market)
-
-
-def test_duplicate_market_timestamp_is_rejected():
-    company = [
-        (ts(1), 0.01),
-        (ts(2), 0.02),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-        (ts(1), 0.20),
-    ]
-
-    with pytest.raises(ValueError, match="duplicate timestamp"):
-        calculate_market_relationship(company, market)
-
-
-def test_naive_timestamp_is_rejected():
-    naive = datetime(2026, 1, 1)
-
-    company = [
-        (naive, 0.01),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-    ]
-
-    with pytest.raises(
-        ValueError,
-        match="timezone-aware UTC timestamp",
-    ):
-        calculate_market_relationship(company, market)
-
-
-def test_non_datetime_timestamp_is_rejected():
-    company = [
-        ("2026-01-01T00:00:00+00:00", 0.01),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-    ]
-
-    with pytest.raises(TypeError, match="timestamp must be a datetime"):
-        calculate_market_relationship(company, market)
-
-
-def test_non_utc_timestamp_is_normalized_to_utc():
-    india_timestamp = datetime(
-        2026,
-        1,
-        1,
-        5,
-        30,
-        0,
-        tzinfo=timezone(timedelta(hours=5, minutes=30)),
-    )
-
-    company = [
-        (india_timestamp, 0.01),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-        company="ABC",
-        market="GOLD",
-    )
-
-    assert result.aligned_timestamps == (ts(1),)
-
-
-def test_non_finite_company_value_is_rejected():
-    company = [
-        (ts(1), float("nan")),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-    ]
-
-    with pytest.raises(ValueError, match="finite"):
-        calculate_market_relationship(company, market)
-
-
-def test_non_finite_market_value_is_rejected():
-    company = [
-        (ts(1), 0.01),
-    ]
-
-    market = [
-        (ts(1), float("inf")),
-    ]
-
-    with pytest.raises(ValueError, match="finite"):
-        calculate_market_relationship(company, market)
-
-
-def test_single_observation_has_no_correlation():
-    company = [
-        (ts(1), 0.01),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-    )
-
-    assert result.sample_size == 1
-    assert result.correlation is None
-
-
-def test_zero_variance_has_no_correlation():
-    company = [
-        (ts(1), 0.01),
-        (ts(2), 0.01),
-        (ts(3), 0.01),
-    ]
-
-    market = [
-        (ts(1), 0.10),
-        (ts(2), 0.20),
-        (ts(3), 0.30),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-    )
-
-    assert result.sample_size == 3
-    assert result.correlation is None
-
-
-def test_negative_correlation():
-    company = [
-        (ts(1), 1.0),
-        (ts(2), 2.0),
-        (ts(3), 3.0),
-    ]
-
-    market = [
-        (ts(1), 3.0),
-        (ts(2), 2.0),
-        (ts(3), 1.0),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-    )
-
-    assert result.correlation == pytest.approx(-1.0)
-
-
-def test_timestamped_convenience_function():
-    company = [
-        (ts(1), 1.0),
-        (ts(2), 2.0),
-        (ts(3), 3.0),
-    ]
-
-    market = [
-        (ts(1), 2.0),
-        (ts(2), 4.0),
-        (ts(3), 6.0),
-    ]
-
-    result = calculate_timestamped_correlation(
-        company,
-        market,
-    )
-
-    assert result.correlation == pytest.approx(1.0)
-    assert result.sample_size == 3
-
-
-def test_legacy_numeric_correlation():
-    result = calculate_correlation(
-        [1.0, 2.0, 3.0],
-        [2.0, 4.0, 6.0],
-    )
-
-    assert result == pytest.approx(1.0)
-
-
-def test_legacy_numeric_length_mismatch_is_rejected():
-    with pytest.raises(
-        ValueError,
-        match="equal length",
-    ):
-        calculate_correlation(
-            [1.0, 2.0, 3.0],
-            [1.0, 2.0],
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from math import isfinite, sqrt
+from typing import Iterable, Mapping, Sequence
+
+
+@dataclass(frozen=True)
+class RelationshipResult:
+    """
+    Auditable relationship-calculation result.
+
+    Correlation describes statistical association only.
+    It does not establish causation.
+    """
+
+    market: str
+    company: str
+    correlation: float | None
+    sample_size: int
+    aligned_timestamps: tuple[datetime, ...]
+    company_mean_return: float | None
+    market_mean_return: float | None
+    excess_mean_return: float | None
+    calculation_method: str
+    causation_claim: bool = False
+
+    def validate(self) -> None:
+        if not self.market:
+            raise ValueError("market must be non-empty")
+
+        if not self.company:
+            raise ValueError("company must be non-empty")
+
+        if self.sample_size < 0:
+            raise ValueError("sample_size must be non-negative")
+
+        if self.sample_size != len(self.aligned_timestamps):
+            raise ValueError(
+                "sample_size must equal aligned_timestamps length"
+            )
+
+        for ts in self.aligned_timestamps:
+            if not isinstance(ts, datetime):
+                raise TypeError("timestamps must be datetime objects")
+
+            if ts.tzinfo is None or ts.utcoffset() is None:
+                raise ValueError(
+                    "timestamp must be timezone-aware UTC timestamp"
+                )
+
+            if ts.astimezone(timezone.utc) != ts:
+                raise ValueError("timestamps must be normalized to UTC")
+
+        for value in (
+            self.correlation,
+            self.company_mean_return,
+            self.market_mean_return,
+            self.excess_mean_return,
+        ):
+            if value is not None and not isfinite(float(value)):
+                raise ValueError("result values must be finite")
+
+        if self.causation_claim:
+            raise ValueError(
+                "RelationshipResult must not claim causation"
+            )
+
+
+def _utc_timestamp(value: datetime) -> datetime:
+    """
+    Normalize a timezone-aware datetime to UTC.
+    """
+    if not isinstance(value, datetime):
+        raise TypeError("timestamp must be a datetime")
+
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(
+            "timestamp must be timezone-aware UTC timestamp"
         )
 
+    return value.astimezone(timezone.utc)
 
-def test_legacy_numeric_relationship():
-    result = calculate_market_relationship(
-        [1.0, 2.0, 3.0],
-        [2.0, 4.0, 6.0],
-        company="ABC",
-        market="GOLD",
+
+def _validate_timestamped_values(
+    observations: Iterable[tuple[datetime, float]],
+    *,
+    name: str,
+) -> dict[datetime, float]:
+    """
+    Validate timestamped numeric observations.
+
+    No silent sorting, truncation, filling, or duplicate replacement.
+    """
+    result: dict[datetime, float] = {}
+
+    for timestamp, value in observations:
+        ts = _utc_timestamp(timestamp)
+
+        numeric = float(value)
+
+        if not isfinite(numeric):
+            raise ValueError(f"{name} values must be finite")
+
+        if ts in result:
+            raise ValueError(
+                f"duplicate timestamp in {name}: {ts.isoformat()}"
+            )
+
+        result[ts] = numeric
+
+    return result
+
+
+def _validate_numeric_series(
+    values: Sequence[float],
+    *,
+    name: str,
+) -> tuple[float, ...]:
+    result = tuple(float(value) for value in values)
+
+    for value in result:
+        if not isfinite(value):
+            raise ValueError(f"{name} values must be finite")
+
+    return result
+
+
+def _pearson(
+    x: Sequence[float],
+    y: Sequence[float],
+) -> float | None:
+    """
+    Calculate Pearson correlation.
+
+    Returns None when fewer than two observations are available
+    or either series has zero variance.
+    """
+    if len(x) != len(y):
+        raise ValueError("series lengths must match")
+
+    if len(x) < 2:
+        return None
+
+    mean_x = sum(x) / len(x)
+    mean_y = sum(y) / len(y)
+
+    numerator = sum(
+        (a - mean_x) * (b - mean_y)
+        for a, b in zip(x, y)
     )
 
-    assert result.correlation == pytest.approx(1.0)
-    assert result.sample_size == 3
-    assert result.company_mean_return == pytest.approx(2.0)
-    assert result.market_mean_return == pytest.approx(4.0)
-    assert result.excess_mean_return == pytest.approx(-2.0)
-    assert result.aligned_timestamps == ()
-    assert result.causation_claim is False
+    variance_x = sum(
+        (a - mean_x) ** 2
+        for a in x
+    )
+
+    variance_y = sum(
+        (b - mean_y) ** 2
+        for b in y
+    )
+
+    denominator = sqrt(variance_x * variance_y)
+
+    if denominator == 0:
+        return None
+
+    return numerator / denominator
 
 
-def test_mixed_timestamp_and_numeric_formats_are_rejected():
-    company = [
-        (ts(1), 0.01),
-        (ts(2), 0.02),
-    ]
+def _timestamp_alignment(
+    company_observations: Mapping[datetime, float],
+    market_observations: Mapping[datetime, float],
+) -> tuple[
+    tuple[datetime, ...],
+    tuple[float, ...],
+    tuple[float, ...],
+]:
+    """
+    Align observations strictly by identical timestamps.
 
-    market = [
-        0.10,
-        0.20,
-    ]
+    Missing timestamps are not fabricated and unmatched observations
+    are not positionally paired.
+    """
+    company_map = {
+        _utc_timestamp(timestamp): float(value)
+        for timestamp, value in company_observations.items()
+    }
 
-    with pytest.raises(
-        ValueError,
-        match="same format",
-    ):
+    market_map = {
+        _utc_timestamp(timestamp): float(value)
+        for timestamp, value in market_observations.items()
+    }
+
+    common = sorted(
+        set(company_map).intersection(market_map)
+    )
+
+    company_values = tuple(
+        company_map[timestamp]
+        for timestamp in common
+    )
+
+    market_values = tuple(
+        market_map[timestamp]
+        for timestamp in common
+    )
+
+    return (
+        tuple(common),
+        company_values,
+        market_values,
+    )
+
+
+def calculate_market_relationship(
+    company_observations: Iterable[tuple[datetime, float]]
+    | Sequence[float],
+    market_observations: Iterable[tuple[datetime, float]]
+    | Sequence[float],
+    *,
+    company: str = "",
+    market: str = "",
+    benchmark_observations: Iterable[tuple[datetime, float]] | None = None,
+) -> RelationshipResult:
+    """
+    Calculate the relationship between company and market observations.
+
+    Preferred API:
+        timestamped observations
+
+    Example:
         calculate_market_relationship(
-            company,
-            market,
+            company_observations=[
+                (datetime(..., tzinfo=timezone.utc), 0.01),
+                ...
+            ],
+            market_observations=[
+                (datetime(..., tzinfo=timezone.utc), 0.02),
+                ...
+            ],
+            company="TITAN",
+            market="GOLD",
         )
 
+    Legacy API:
+        numeric sequences remain supported for backward compatibility.
+    """
 
-def test_relationship_result_validation():
+    company_is_timestamped = (
+        not isinstance(company_observations, Sequence)
+        or (
+            len(company_observations) > 0
+            and isinstance(company_observations[0], tuple)
+        )
+    )
+
+    market_is_timestamped = (
+        not isinstance(market_observations, Sequence)
+        or (
+            len(market_observations) > 0
+            and isinstance(market_observations[0], tuple)
+        )
+    )
+
+    if company_is_timestamped != market_is_timestamped:
+        raise ValueError(
+            "company and market observations must use the same format"
+        )
+
+    if company_is_timestamped:
+        company_map = _validate_timestamped_values(
+            company_observations,  # type: ignore[arg-type]
+            name="company",
+        )
+
+        market_map = _validate_timestamped_values(
+            market_observations,  # type: ignore[arg-type]
+            name="market",
+        )
+
+        timestamps, company_values, market_values = (
+            _timestamp_alignment(
+                company_map,
+                market_map,
+            )
+        )
+
+        company_mean = (
+            sum(company_values) / len(company_values)
+            if company_values
+            else None
+        )
+
+        market_mean = (
+            sum(market_values) / len(market_values)
+            if market_values
+            else None
+        )
+
+        excess_mean = (
+            company_mean - market_mean
+            if company_mean is not None
+            and market_mean is not None
+            else None
+        )
+
+        result = RelationshipResult(
+            market=market,
+            company=company,
+            correlation=_pearson(
+                company_values,
+                market_values,
+            ),
+            sample_size=len(timestamps),
+            aligned_timestamps=timestamps,
+            company_mean_return=company_mean,
+            market_mean_return=market_mean,
+            excess_mean_return=excess_mean,
+            calculation_method=(
+                "timestamp_intersection_pearson"
+            ),
+            causation_claim=False,
+        )
+
+        result.validate()
+        return result
+
+    company_values = _validate_numeric_series(
+        company_observations,  # type: ignore[arg-type]
+        name="company",
+    )
+
+    market_values = _validate_numeric_series(
+        market_observations,  # type: ignore[arg-type]
+        name="market",
+    )
+
+    if len(company_values) != len(market_values):
+        raise ValueError(
+            "company and market series must have equal length"
+        )
+
+    company_mean = (
+        sum(company_values) / len(company_values)
+        if company_values
+        else None
+    )
+
+    market_mean = (
+        sum(market_values) / len(market_values)
+        if market_values
+        else None
+    )
+
+    excess_mean = (
+        company_mean - market_mean
+        if company_mean is not None
+        and market_mean is not None
+        else None
+    )
+
     result = RelationshipResult(
-        market="GOLD",
-        company="TITAN",
-        correlation=0.5,
-        sample_size=2,
-        aligned_timestamps=(
-            ts(1),
-            ts(2),
+        market=market,
+        company=company,
+        correlation=_pearson(
+            company_values,
+            market_values,
         ),
-        company_mean_return=0.01,
-        market_mean_return=0.02,
-        excess_mean_return=-0.01,
-        calculation_method="timestamp_intersection_pearson",
+        sample_size=len(company_values),
+        aligned_timestamps=tuple(),
+        company_mean_return=company_mean,
+        market_mean_return=market_mean,
+        excess_mean_return=excess_mean,
+        calculation_method="positional_pearson_legacy",
         causation_claim=False,
     )
 
     result.validate()
+    return result
 
 
-def test_relationship_result_rejects_causation_claim():
-    result = RelationshipResult(
-        market="GOLD",
-        company="TITAN",
-        correlation=0.5,
-        sample_size=0,
-        aligned_timestamps=(),
-        company_mean_return=None,
-        market_mean_return=None,
-        excess_mean_return=None,
-        calculation_method="test",
-        causation_claim=True,
+def calculate_correlation(
+    company_values: Sequence[float],
+    market_values: Sequence[float],
+) -> float | None:
+    """
+    Backward-compatible numeric correlation helper.
+    """
+    company = _validate_numeric_series(
+        company_values,
+        name="company",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="must not claim causation",
-    ):
-        result.validate()
-
-
-def test_relationship_result_sample_size_must_match_timestamps():
-    result = RelationshipResult(
-        market="GOLD",
-        company="TITAN",
-        correlation=0.5,
-        sample_size=3,
-        aligned_timestamps=(ts(1), ts(2)),
-        company_mean_return=0.01,
-        market_mean_return=0.02,
-        excess_mean_return=-0.01,
-        calculation_method="test",
-        causation_claim=False,
+    market = _validate_numeric_series(
+        market_values,
+        name="market",
     )
 
-    with pytest.raises(
-        ValueError,
-        match="sample_size must equal",
-    ):
-        result.validate()
+    if len(company) != len(market):
+        raise ValueError(
+            "company and market series must have equal length"
+        )
+
+    return _pearson(company, market)
 
 
-def test_relationship_result_rejects_naive_timestamp():
-    result = RelationshipResult(
-        market="GOLD",
-        company="TITAN",
-        correlation=None,
-        sample_size=1,
-        aligned_timestamps=(
-            datetime(2026, 1, 1),
-        ),
-        company_mean_return=0.01,
-        market_mean_return=0.02,
-        excess_mean_return=-0.01,
-        calculation_method="test",
-        causation_claim=False,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="timezone-aware UTC timestamp",
-    ):
-        result.validate()
-
-
-def test_alignment_is_chronological():
-    company = [
-        (ts(3), 3.0),
-        (ts(1), 1.0),
-        (ts(2), 2.0),
-    ]
-
-    market = [
-        (ts(2), 20.0),
-        (ts(3), 30.0),
-        (ts(1), 10.0),
-    ]
-
-    result = calculate_market_relationship(
-        company,
-        market,
-    )
-
-    assert result.aligned_timestamps == (
-        ts(1),
-        ts(2),
-        ts(3),
+def calculate_timestamped_correlation(
+    company_observations: Iterable[tuple[datetime, float]],
+    market_observations: Iterable[tuple[datetime, float]],
+) -> RelationshipResult:
+    """
+    Convenience API for timestamp-aware relationship calculation.
+    """
+    return calculate_market_relationship(
+        company_observations,
+        market_observations,
     )
 
 
-def test_result_is_descriptive_not_causal():
-    result = calculate_market_relationship(
-        [
-            (ts(1), 0.01),
-            (ts(2), 0.02),
-            (ts(3), 0.03),
-        ],
-        [
-            (ts(1), 0.02),
-            (ts(2), 0.04),
-            (ts(3), 0.06),
-        ],
-        company="TITAN",
-        market="GOLD",
-    )
-
-    assert result.causation_claim is False
+__all__ = [
+    "RelationshipResult",
+    "calculate_market_relationship",
+    "calculate_correlation",
+    "calculate_timestamped_correlation",
+]
