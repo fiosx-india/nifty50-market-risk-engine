@@ -536,8 +536,16 @@ def calculate_lags(
 ) -> tuple[LaggedRelationshipResult, ...]:
     """
     Calculate lagged relationships for multiple lag values.
-    """
 
+    Each lag is calculated independently using the existing
+    calculate_lagged_relationship() implementation.
+
+    Positive lag:
+        Market[t] -> Company[t + lag]
+
+    This function performs statistical association only.
+    It does not make causation claims.
+    """
     normalized_lags = tuple(lags)
 
     if len(set(normalized_lags)) != len(normalized_lags):
