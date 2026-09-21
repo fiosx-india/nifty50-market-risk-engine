@@ -536,12 +536,6 @@ def calculate_lags(
 ) -> tuple[LaggedRelationshipResult, ...]:
     """
     Calculate lagged relationships for multiple lag values.
-
-    This is a compatibility/public convenience API around
-    calculate_lagged_relationship().
-
-    Each lag is calculated independently.
-    No causation is inferred.
     """
 
     normalized_lags = tuple(lags)
