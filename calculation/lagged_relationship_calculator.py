@@ -524,6 +524,54 @@ def calculate_lagged_correlation(
 
     return result.correlation
 
+def calculate_lags(
+    market_observations: Iterable[tuple[datetime, float]]
+    | Sequence[float],
+    company_observations: Iterable[tuple[datetime, float]]
+    | Sequence[float],
+    lags: Sequence[int],
+    *,
+    market: str = "",
+    company: str = "",
+) -> tuple[LaggedRelationshipResult, ...]:
+    """
+    Calculate lagged relationships for multiple lag values.
+
+    This is a compatibility/public convenience API around
+    calculate_lagged_relationship().
+
+    Each lag is calculated independently.
+    No causation is inferred.
+    """
+
+    normalized_lags = tuple(lags)
+
+    if len(set(normalized_lags)) != len(normalized_lags):
+        raise ValueError(
+            "duplicate lag values are not allowed"
+        )
+
+    for lag in normalized_lags:
+        if not isinstance(lag, int):
+            raise TypeError(
+                "each lag must be an integer"
+            )
+
+        if lag < 0:
+            raise ValueError(
+                "lag must be non-negative"
+            )
+
+    return tuple(
+        calculate_lagged_relationship(
+            market_observations,
+            company_observations,
+            lag=lag,
+            market=market,
+            company=company,
+        )
+        for lag in normalized_lags
+    )
 
 __all__ = [
     "LaggedRelationshipResult",
