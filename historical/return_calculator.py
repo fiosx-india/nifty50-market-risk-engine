@@ -251,32 +251,33 @@ def align_returns(
 
     return timestamps, company_values, market_values
 
-
-def calculate_return_series(
+def cumulative_return(
     observations: Iterable[object],
-    *,
-    method: str = "simple",
-) -> tuple[TimestampedReturn, ...]:
+) -> float | None:
     """
-    Public return-series entry point.
+    Calculate cumulative simple return from timestamped OHLCV observations.
 
-    Supported methods:
-      - simple
-      - log
+    cumulative_return = final_close / initial_close - 1
+
+    Returns None when fewer than two observations exist.
     """
 
-    normalized_method = method.strip().lower()
+    rows = _validate_observations(observations)
 
-    if normalized_method == "simple":
-        return simple_returns(observations)
+    if len(rows) < 2:
+        return None
 
-    if normalized_method in {"log", "logarithmic"}:
-        return logarithmic_returns(observations)
+    initial_close = rows[0][1]
+    final_close = rows[-1][1]
 
-    raise ValueError(
-        "unsupported return method; use 'simple' or 'log'"
-    )
+    result = final_close / initial_close - 1.0
 
+    if not isfinite(result):
+        raise ValueError(
+            "cumulative return must be finite"
+        )
+
+    return result
 
 __all__ = [
     "TimestampedReturn",
