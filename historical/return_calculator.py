@@ -286,4 +286,5 @@ __all__ = [
     "return_map",
     "align_returns",
     "calculate_return_series",
+    "cumulative_return",
 ]
