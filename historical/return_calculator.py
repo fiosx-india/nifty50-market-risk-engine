@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import isfinite
+from math import isfinite, log
 from typing import Iterable, Mapping, Sequence
 
 
@@ -123,9 +123,6 @@ def simple_returns(
     Calculate simple close-to-close returns.
 
     return[t] = close[t] / close[t-1] - 1
-
-    The first observation has no return and is therefore omitted.
-    No timestamps are fabricated or silently filled.
     """
 
     rows = _validate_observations(observations)
@@ -139,11 +136,9 @@ def simple_returns(
         previous_timestamp, previous_close = rows[index - 1]
         timestamp, close = rows[index]
 
-        value = close / previous_close - 1.0
-
         result = TimestampedReturn(
             timestamp=timestamp,
-            value=value,
+            value=close / previous_close - 1.0,
             previous_timestamp=previous_timestamp,
         )
 
@@ -160,11 +155,7 @@ def logarithmic_returns(
     Calculate continuously compounded close-to-close returns.
 
     log_return[t] = ln(close[t] / close[t-1])
-
-    Implemented without silently dropping invalid observations.
     """
-
-    from math import log
 
     rows = _validate_observations(observations)
 
@@ -177,11 +168,9 @@ def logarithmic_returns(
         previous_timestamp, previous_close = rows[index - 1]
         timestamp, close = rows[index]
 
-        value = log(close / previous_close)
-
         result = TimestampedReturn(
             timestamp=timestamp,
-            value=value,
+            value=log(close / previous_close),
             previous_timestamp=previous_timestamp,
         )
 
@@ -194,9 +183,7 @@ def logarithmic_returns(
 def return_map(
     observations: Iterable[object],
 ) -> dict[datetime, float]:
-    """
-    Convert simple returns into a timestamp -> return mapping.
-    """
+    """Convert simple returns into a timestamp -> return mapping."""
 
     results = simple_returns(observations)
 
@@ -221,8 +208,6 @@ def align_returns(
     No forward fill.
     No interpolation.
     No silent truncation.
-
-    Only timestamps present in both series are returned.
     """
 
     company_map = {
@@ -251,15 +236,14 @@ def align_returns(
 
     return timestamps, company_values, market_values
 
+
 def cumulative_return(
     observations: Iterable[object],
 ) -> float | None:
     """
-    Calculate cumulative simple return from timestamped OHLCV observations.
+    Calculate cumulative simple return.
 
     cumulative_return = final_close / initial_close - 1
-
-    Returns None when fewer than two observations exist.
     """
 
     rows = _validate_observations(observations)
@@ -278,6 +262,34 @@ def cumulative_return(
         )
 
     return result
+
+
+def calculate_return_series(
+    observations: Iterable[object],
+    *,
+    method: str = "simple",
+) -> tuple[TimestampedReturn, ...]:
+    """
+    Public return-series entry point.
+
+    Supported methods:
+      - simple
+      - log
+      - logarithmic
+    """
+
+    normalized_method = method.strip().lower()
+
+    if normalized_method == "simple":
+        return simple_returns(observations)
+
+    if normalized_method in {"log", "logarithmic"}:
+        return logarithmic_returns(observations)
+
+    raise ValueError(
+        "unsupported return method; use 'simple' or 'log'"
+    )
+
 
 __all__ = [
     "TimestampedReturn",
