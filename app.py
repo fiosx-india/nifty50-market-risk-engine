@@ -20,17 +20,17 @@ if str(ROOT) not in sys.path:
 # Existing architecture
 #
 # UI
-#   ↓
+#   â†“
 # HistoricalDataProvider
-#   ↓
+#   â†“
 # AngelOneHistoricalProvider
-#   ↓
+#   â†“
 # existing provider / instrument resolution
-#   ↓
+#   â†“
 # MarketContext
-#   ↓
+#   â†“
 # CentralBrain
-#   ↓
+#   â†“
 # UI
 #
 # No second orchestration workflow is created here.
@@ -91,16 +91,16 @@ from indicators.market_structure import (
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="NIFTY 50 Market Risk Engine",
-    page_icon="📊",
+    page_icon="ðŸ“Š",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
-st.title("📊 NIFTY 50 Market Risk Engine")
+st.title("ðŸ“Š NIFTY 50 Market Risk Engine")
 
 st.caption(
-    "Evidence-first market research dashboard • "
+    "Evidence-first market research dashboard â€¢ "
     "existing engine architecture preserved"
 )
 
@@ -157,11 +157,174 @@ initialize_session_state()
 # HELPERS
 # ===========================================================================
 
-def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_ohlcv(
+    df: pd.DataFrame,
+    selected_symbol: str | None = None,
+) -> pd.DataFrame:
     """
-    Normalize common CSV column spellings without changing engine modules.
+    Normalize either:
+
+    1. Historical OHLCV time-series CSV
+    2. NSE/market-watch snapshot CSV
+
+    The uploaded MW-NIFTY-50-01-Oct-2026.csv is a market snapshot:
+    it contains OPEN/HIGH/LOW/PREV. CLOSE/LTP/VOLUME (shares), not a
+    historical Close column or timestamps.
+
+    For a snapshot, LTP is exposed as the latest price in the canonical
+    `close` field only for compatibility with the existing MarketContext.
+    The dataframe is explicitly marked with attrs["data_mode"] so technical
+    indicators and pattern engines are not run as if this were historical
+    candle data.
     """
 
+    if df is None or df.empty:
+        raise ValueError("CSV is empty.")
+
+    # -----------------------------------------------------------------------
+    # Detect the supplied NSE/market-watch snapshot schema BEFORE applying
+    # generic OHLCV aliases.
+    # -----------------------------------------------------------------------
+    normalized_keys = {
+        str(col).strip().lower(): col
+        for col in df.columns
+    }
+
+    snapshot_required = {
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "prev. close",
+        "ltp",
+        "volume (shares)",
+    }
+
+    if snapshot_required.issubset(set(normalized_keys.keys())):
+
+        symbol_col = normalized_keys["symbol"]
+        open_col = normalized_keys["open"]
+        high_col = normalized_keys["high"]
+        low_col = normalized_keys["low"]
+        prev_close_col = normalized_keys["prev. close"]
+        ltp_col = normalized_keys["ltp"]
+        volume_col = normalized_keys["volume (shares)"]
+
+        out = pd.DataFrame(
+            {
+                "symbol": df[symbol_col].astype(str).str.strip(),
+                "open": pd.to_numeric(
+                    df[open_col].astype(str).str.replace(",", "", regex=False),
+                    errors="coerce",
+                ),
+                "high": pd.to_numeric(
+                    df[high_col].astype(str).str.replace(",", "", regex=False),
+                    errors="coerce",
+                ),
+                "low": pd.to_numeric(
+                    df[low_col].astype(str).str.replace(",", "", regex=False),
+                    errors="coerce",
+                ),
+                "prev_close": pd.to_numeric(
+                    df[prev_close_col].astype(str).str.replace(",", "", regex=False),
+                    errors="coerce",
+                ),
+                "ltp": pd.to_numeric(
+                    df[ltp_col].astype(str).str.replace(",", "", regex=False),
+                    errors="coerce",
+                ),
+                "volume": pd.to_numeric(
+                    df[volume_col].astype(str).str.replace(",", "", regex=False),
+                    errors="coerce",
+                ),
+            }
+        )
+
+        out = out.dropna(
+            subset=[
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "ltp",
+                "volume",
+            ]
+        ).reset_index(drop=True)
+
+        if out.empty:
+            raise ValueError(
+                "The market snapshot CSV contains no valid rows."
+            )
+
+        # A market snapshot has no candle close. LTP is the current/latest
+        # traded price, so expose it as canonical latest price while marking
+        # the semantics explicitly.
+        out["close"] = out["ltp"]
+
+        out["timestamp"] = pd.Timestamp.now(tz="UTC")
+
+        if selected_symbol:
+            requested = str(selected_symbol).strip().upper()
+
+            matches = out[
+                out["symbol"].str.upper() == requested
+            ].copy()
+
+            if matches.empty:
+                available_preview = ", ".join(
+                    out["symbol"].head(12).tolist()
+                )
+
+                raise ValueError(
+                    f"The uploaded market snapshot does not contain "
+                    f"'{selected_symbol}'. "
+                    f"This file contains {len(out)} instruments, including: "
+                    f"{available_preview}. "
+                    "Upload a file containing the selected instrument or "
+                    "use Angel One SmartAPI for that market."
+                )
+
+            out = matches.reset_index(drop=True)
+
+        if (out["high"] < out["low"]).any():
+            raise ValueError(
+                "Market snapshot contains rows where High < Low."
+            )
+
+        if (out["ltp"] < out["low"]).any() or (
+            out["ltp"] > out["high"]
+        ).any():
+            raise ValueError(
+                "Market snapshot contains LTP values outside Low/High."
+            )
+
+        if (out["volume"] < 0).any():
+            raise ValueError(
+                "Market snapshot contains negative Volume."
+            )
+
+        out.attrs["data_mode"] = "market_snapshot"
+        out.attrs["price_semantics"] = "LTP"
+        out.attrs["historical"] = False
+        out.attrs["source_format"] = "NSE market-watch snapshot"
+
+        return out[
+            [
+                "timestamp",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "prev_close",
+                "ltp",
+            ]
+        ]
+
+    # -----------------------------------------------------------------------
+    # Standard historical OHLCV CSV
+    # -----------------------------------------------------------------------
     aliases = {
         "date": "timestamp",
         "datetime": "timestamp",
@@ -203,13 +366,16 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(
             "CSV must contain Open, High, Low, Close and Volume columns. "
-            f"Missing: {', '.join(missing)}"
+            f"Missing: {', '.join(missing)}. "
+            "The uploaded MW-NIFTY file is a market snapshot, not a "
+            "historical OHLCV file."
         )
 
     if "timestamp" in out.columns:
         out["timestamp"] = pd.to_datetime(
             out["timestamp"],
             errors="coerce",
+            utc=True,
         )
 
         out = (
@@ -220,7 +386,7 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
     for column in required:
         out[column] = pd.to_numeric(
-            out[column],
+            out[column].astype(str).str.replace(",", "", regex=False),
             errors="coerce",
         )
 
@@ -233,6 +399,11 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     if out.empty:
         raise ValueError(
             "No valid OHLCV rows remain after cleaning."
+        )
+
+    if "timestamp" not in out.columns:
+        raise ValueError(
+            "Historical OHLCV CSV requires a Timestamp/Date/Datetime column."
         )
 
     if (out["high"] < out["low"]).any():
@@ -252,6 +423,11 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(
             "CSV contains negative Volume."
         )
+
+    out.attrs["data_mode"] = "historical_ohlcv"
+    out.attrs["price_semantics"] = "close"
+    out.attrs["historical"] = True
+    out.attrs["source_format"] = "historical OHLCV"
 
     return out
 
@@ -274,11 +450,11 @@ def fmt(value, digits=4):
     """
 
     if value is None:
-        return "—"
+        return "â€”"
 
     try:
         if pd.isna(value):
-            return "—"
+            return "â€”"
 
         return f"{float(value):.{digits}f}"
 
@@ -1118,7 +1294,7 @@ with st.sidebar:
             )
 
         fetch_angel = st.button(
-            "🔌 Fetch from Angel One",
+            "ðŸ”Œ Fetch from Angel One",
             type="primary",
             width="stretch",
         )
@@ -1364,7 +1540,8 @@ else:
             df = normalize_ohlcv(
                 pd.read_csv(
                     uploaded
-                )
+                ),
+                selected_symbol=symbol,
             )
 
             st.session_state[
@@ -1481,7 +1658,7 @@ c4.metric(
 if data_source == "Angel One SmartAPI":
 
     st.markdown(
-        "### 🔌 Angel One Data Status"
+        "### ðŸ”Œ Angel One Data Status"
     )
 
     status_col1, status_col2, status_col3, status_col4 = st.columns(4)
@@ -1563,7 +1740,7 @@ if data_source == "Angel One SmartAPI":
 with tab_overview:
 
     st.subheader(
-        f"{symbol} • {timeframe}"
+        f"{symbol} â€¢ {timeframe}"
     )
 
     if df is None:
@@ -1576,6 +1753,18 @@ with tab_overview:
         )
 
     else:
+
+        data_mode = df.attrs.get(
+            "data_mode",
+            "historical_ohlcv",
+        )
+
+        if data_mode == "market_snapshot":
+            st.info(
+                "Market snapshot loaded. The uploaded file provides "
+                "current LTP/open/high/low/volume for the selected instrument; "
+                "it is not a historical candle series."
+            )
 
         latest_close = float(
             df["close"].iloc[-1]
@@ -1618,7 +1807,7 @@ with tab_overview:
             (
                 f"{fmt(change, 2)}%"
                 if change is not None
-                else "—"
+                else "â€”"
             ),
         )
 
@@ -1689,6 +1878,15 @@ with tab_technical:
 
         st.info(
             "Load OHLCV data first."
+        )
+
+    elif df.attrs.get("data_mode") == "market_snapshot":
+
+        st.info(
+            "Technical indicators require historical candle data. "
+            "The uploaded file is a one-day market snapshot, so indicators "
+            "are intentionally not calculated from it. Use Angel One SmartAPI "
+            "or upload a historical OHLCV file."
         )
 
     else:
@@ -1842,6 +2040,14 @@ with tab_structure:
             "Load OHLCV data first."
         )
 
+    elif df.attrs.get("data_mode") == "market_snapshot":
+
+        st.info(
+            "Structure and candlestick pattern detection require a "
+            "historical candle series. The uploaded file is a market "
+            "snapshot, so these engines are intentionally not run."
+        )
+
     else:
 
         h = df[
@@ -1958,7 +2164,7 @@ with tab_context:
 
     st.markdown(
         """
-        **Data → Provider → Analysis modules → MarketContext → CentralBrain → UI**
+        **Data â†’ Provider â†’ Analysis modules â†’ MarketContext â†’ CentralBrain â†’ UI**
 
         The UI does not create a second orchestration workflow and does not
         make an independent trading decision.
