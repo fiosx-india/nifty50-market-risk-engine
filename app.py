@@ -31,7 +31,7 @@ from indicators.volume_indicators import (
     relative_volume, obv, accumulation_distribution,
     price_volume_confirmation,
 )
-from indicators.candlestick_patterns import detect as detect_candle
+from indicators.candlestick_patterns import detect_last as detect_candle
 from indicators.chart_patterns import structure_snapshot
 from indicators.market_structure import market_structure_snapshot
 
