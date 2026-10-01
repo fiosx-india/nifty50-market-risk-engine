@@ -997,7 +997,7 @@ with st.sidebar:
         "Angel One start date",
         value=(
             datetime.now().date()
-            - pd.Timedelta(days=30)
+            - pd.Timedelta(value=30, unit="D")
         ),
     )
 
@@ -1037,7 +1037,7 @@ with st.sidebar:
         fetch_angel = st.button(
             "🔌 Fetch from Angel One",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -1583,7 +1583,7 @@ with tab_overview:
 
         st.line_chart(
             chart_df,
-            use_container_width=True,
+            width="stretch",
         )
 
         st.subheader(
@@ -1592,7 +1592,7 @@ with tab_overview:
 
         st.dataframe(
             df.tail(20),
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -1706,7 +1706,7 @@ with tab_technical:
 
         st.dataframe(
             pd.DataFrame(rows),
-            use_container_width=True,
+            width="stretch",
         )
 
         st.subheader(
@@ -1978,7 +1978,7 @@ with tab_health:
 
     st.dataframe(
         health_df,
-        use_container_width=True,
+        width="stretch",
     )
 
     st.info(
