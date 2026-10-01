@@ -19,6 +19,8 @@ if str(ROOT) not in sys.path:
 from context.market_context import MarketContext
 from orchestration.central_brain import CentralBrain
 from config.universe import NIFTY50_SYMBOLS, TRACKED_MARKETS
+from data_providers.historical_provider import HistoricalDataProvider
+from data_providers.angel_one_provider import AngelOneHistoricalProvider
 
 from indicators.technical_indicators import (
     sma, ema, wma, roc, momentum, rsi, atr, bollinger, vwap,
@@ -188,6 +190,79 @@ def build_context(symbol: str, timeframe: str, df: pd.DataFrame | None):
 
 
 # ---------------------------------------------------------------------------
+# Angel One integration
+# ---------------------------------------------------------------------------
+ANGEL_NATIVE_INTERVAL = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "1H": "1H",
+    "1D": "1D",
+}
+
+
+@st.cache_resource(ttl=1800, show_spinner=False)
+def get_angel_provider(api_key: str, client_code: str, pin: str, totp_secret: str):
+    return HistoricalDataProvider(
+        AngelOneHistoricalProvider(
+            api_key=api_key,
+            client_code=client_code,
+            pin=pin,
+            totp_secret=totp_secret,
+        )
+    )
+
+
+def get_angel_secrets():
+    try:
+        section = st.secrets["angel_one"]
+        return (
+            str(section["api_key"]),
+            str(section["client_code"]),
+            str(section["pin"]),
+            str(section["totp_secret"]),
+        )
+    except Exception:
+        return None
+
+
+def fetch_from_angel(
+    provider: HistoricalDataProvider,
+    symbol: str,
+    timeframe: str,
+    start_date,
+    end_date,
+    market_kind: str,
+):
+    if timeframe not in ANGEL_NATIVE_INTERVAL:
+        raise ValueError(
+            "Angel One historical API currently supports 1m, 5m, 15m, 1H and 1D "
+            "directly in this dashboard. Select one of these timeframes."
+        )
+
+    start = datetime.combine(start_date, datetime.min.time())
+    end = datetime.combine(end_date, datetime.max.time())
+    market = "NIFTY 50 Company" if market_kind == "NIFTY 50 Company" else "NIFTY 50"
+
+    result = provider.fetch_normalized(
+        symbol=symbol,
+        start=start.isoformat(),
+        end=end.isoformat(),
+        interval=ANGEL_NATIVE_INTERVAL[timeframe],
+        market=market,
+    )
+    frame = pd.DataFrame(result.records)
+    if frame.empty:
+        raise ValueError("Angel One returned no historical OHLCV rows for this range.")
+
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+    for column in ["open", "high", "low", "close", "volume"]:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame = frame.dropna(subset=["open", "high", "low", "close", "volume"])
+    return frame.reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
@@ -219,25 +294,76 @@ with st.sidebar:
     )
 
     st.divider()
-    uploaded = st.file_uploader(
-        "Historical OHLCV CSV",
-        type=["csv"],
-        help="Use columns such as Timestamp, Open, High, Low, Close, Volume.",
+    data_source = st.radio(
+        "Data source",
+        ["Angel One SmartAPI", "Historical OHLCV CSV"],
+        index=0,
     )
+
+    uploaded = None
+    angel_start = st.date_input("Angel One start date", value=datetime.now().date())
+    angel_end = st.date_input("Angel One end date", value=datetime.now().date())
+
+    if data_source == "Historical OHLCV CSV":
+        uploaded = st.file_uploader(
+            "Historical OHLCV CSV",
+            type=["csv"],
+            help="Use columns such as Timestamp, Open, High, Low, Close, Volume.",
+        )
+    else:
+        st.caption("Angel One credentials are read only from Streamlit Secrets.")
+        fetch_angel = st.button("🔌 Fetch from Angel One", type="primary", use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
 df = None
-if uploaded is not None:
-    try:
-        df = normalize_ohlcv(pd.read_csv(uploaded))
-        st.session_state["ohlcv"] = df
-        st.session_state["filename"] = uploaded.name
-    except Exception as exc:
-        st.error(str(exc))
-elif "ohlcv" in st.session_state:
-    df = st.session_state["ohlcv"]
+angel_error = None
+
+if data_source == "Angel One SmartAPI":
+    secrets = get_angel_secrets()
+    if fetch_angel:
+        if secrets is None:
+            angel_error = (
+                "Angel One Secrets missing. Add [angel_one] with api_key, "
+                "client_code, pin and totp_secret in Streamlit Cloud Secrets."
+            )
+        elif angel_end < angel_start:
+            angel_error = "Angel One end date must be on or after the start date."
+        else:
+            try:
+                provider = get_angel_provider(*secrets)
+                market_kind = universe_type
+                df = fetch_from_angel(
+                    provider,
+                    symbol,
+                    timeframe,
+                    angel_start,
+                    angel_end,
+                    market_kind,
+                )
+                st.session_state["ohlcv"] = df
+                st.session_state["filename"] = "Angel One SmartAPI"
+                st.session_state["data_source"] = "Angel One SmartAPI"
+            except Exception as exc:
+                angel_error = str(exc)
+    elif st.session_state.get("data_source") == "Angel One SmartAPI" and "ohlcv" in st.session_state:
+        df = st.session_state["ohlcv"]
+
+else:
+    if uploaded is not None:
+        try:
+            df = normalize_ohlcv(pd.read_csv(uploaded))
+            st.session_state["ohlcv"] = df
+            st.session_state["filename"] = uploaded.name
+            st.session_state["data_source"] = "Historical OHLCV CSV"
+        except Exception as exc:
+            st.error(str(exc))
+    elif st.session_state.get("data_source") == "Historical OHLCV CSV" and "ohlcv" in st.session_state:
+        df = st.session_state["ohlcv"]
+
+if angel_error:
+    st.error(f"Angel One: {angel_error}")
 
 # ---------------------------------------------------------------------------
 # Top status cards
@@ -246,7 +372,7 @@ c1, c2, c3, c4 = st.columns(4)
 c1.metric("Engine", "ONLINE")
 c2.metric("Orchestrator", "CentralBrain")
 c3.metric("Shared Context", "MarketContext")
-c4.metric("Data", "CONNECTED" if df is not None else "WAITING")
+c4.metric("Data", "ANGEL ONE" if df is not None and data_source == "Angel One SmartAPI" else ("CSV" if df is not None else "WAITING"))
 
 # ---------------------------------------------------------------------------
 # Tabs
@@ -261,9 +387,9 @@ with tab_overview:
 
     if df is None:
         st.info(
-            "Upload an OHLCV CSV from the sidebar to run the calculation engines. "
-            "The current repository does not contain a concrete live-market provider, "
-            "so the app does not invent or simulate live prices."
+            "Select Angel One SmartAPI in the sidebar, configure Streamlit Secrets, "
+            "choose a date range and click Fetch from Angel One. CSV upload remains "
+            "available as the provider-neutral fallback."
         )
     else:
         latest_close = float(df["close"].iloc[-1])
@@ -394,7 +520,7 @@ with tab_health:
         ("Chart patterns", True),
         ("Market structure", True),
         ("Historical/relationship layers", True),
-        ("Live market provider", False),
+        ("Angel One SmartAPI provider", get_angel_secrets() is not None),
     ]
 
     health_df = pd.DataFrame(
@@ -406,10 +532,9 @@ with tab_health:
     st.dataframe(health_df, use_container_width=True)
 
     st.info(
-        "The repository currently provides provider-neutral data contracts and "
-        "historical normalization, but no concrete live-market API adapter. "
-        "That is why the live provider is intentionally shown as NOT CONNECTED "
-        "rather than displaying fabricated market data."
+        "Angel One is implemented as a concrete provider behind the existing "
+        "HistoricalDataProvider boundary. Credentials stay in Streamlit Secrets; "
+        "the UI does not contain API keys or independent market-analysis logic."
     )
 
 st.divider()
