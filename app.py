@@ -301,7 +301,7 @@ with st.sidebar:
     )
 
     uploaded = None
-    angel_start = st.date_input("Angel One start date", value=datetime.now().date())
+    angel_start = st.date_input("Angel One start date", value=datetime.now().date() - pd.Timedelta(days=30))
     angel_end = st.date_input("Angel One end date", value=datetime.now().date())
 
     if data_source == "Historical OHLCV CSV":
@@ -342,6 +342,12 @@ if data_source == "Angel One SmartAPI":
                     angel_end,
                     market_kind,
                 )
+                angel_quote = provider.get_ltp(
+                    symbol,
+                    "NIFTY 50 Company" if market_kind == "NIFTY 50 Company" else "NIFTY 50",
+                )
+                st.session_state["angel_quote"] = angel_quote
+                st.session_state["angel_connected"] = True
                 st.session_state["ohlcv"] = df
                 st.session_state["filename"] = "Angel One SmartAPI"
                 st.session_state["data_source"] = "Angel One SmartAPI"
@@ -349,6 +355,7 @@ if data_source == "Angel One SmartAPI":
                 angel_error = str(exc)
     elif st.session_state.get("data_source") == "Angel One SmartAPI" and "ohlcv" in st.session_state:
         df = st.session_state["ohlcv"]
+        angel_quote = st.session_state.get("angel_quote")
 
 else:
     if uploaded is not None:
@@ -405,6 +412,8 @@ with tab_overview:
         b.metric("Change", f"{fmt(change, 2)}%" if change is not None else "—")
         c.metric("Rows", f"{len(df):,}")
         d.metric("Latest Volume", fmt(df["volume"].iloc[-1], 0))
+        if data_source == "Angel One SmartAPI" and angel_quote:
+            st.metric("Angel One LTP", fmt(angel_quote.get("ltp"), 2))
 
         st.subheader("Price")
         chart_df = df[["close"]].copy()
@@ -520,7 +529,7 @@ with tab_health:
         ("Chart patterns", True),
         ("Market structure", True),
         ("Historical/relationship layers", True),
-        ("Angel One SmartAPI provider", get_angel_secrets() is not None),
+        ("Angel One SmartAPI provider", st.session_state.get("angel_connected", False)),
     ]
 
     health_df = pd.DataFrame(
