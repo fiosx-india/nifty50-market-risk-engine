@@ -897,8 +897,86 @@ def clear_angel_state():
 
 
 # ===========================================================================
+# SIDEBAR SELECTION STATE
+# ===========================================================================
+
+def _first_valid(items, fallback):
+    """Return fallback if valid; otherwise use the first available item."""
+    values = list(items)
+
+    if not values:
+        raise ValueError("Selection list cannot be empty.")
+
+    if fallback in values:
+        return fallback
+
+    return values[0]
+
+
+def reset_market_data_state():
+    """
+    Clear loaded provider data when the research target changes.
+
+    This prevents data from one company/market from appearing under another
+    selection. It does not create another orchestration workflow.
+    """
+    clear_angel_state()
+
+
+def on_universe_type_change():
+    """
+    Give Company and Tracked Market their own independent Streamlit state.
+
+    This is the important fix for the old UI state problem where a value such
+    as 'Gold' could remain inside the Company selector after changing the
+    research universe.
+    """
+    reset_market_data_state()
+
+    if st.session_state["universe_type"] == "NIFTY 50 Company":
+        st.session_state["company_symbol"] = _first_valid(
+            NIFTY50_SYMBOLS,
+            st.session_state.get("company_symbol", "HDFCBANK"),
+        )
+    else:
+        st.session_state["tracked_market_symbol"] = _first_valid(
+            TRACKED_MARKETS,
+            st.session_state.get("tracked_market_symbol", "NIFTY 50"),
+        )
+
+
+def on_company_change():
+    """Clear stale data after changing the selected NIFTY 50 company."""
+    reset_market_data_state()
+
+
+def on_tracked_market_change():
+    """Clear stale data after changing the selected tracked market."""
+    reset_market_data_state()
+
+
+# ===========================================================================
 # SIDEBAR
 # ===========================================================================
+
+# Initialize the two independent widget values before the widgets are created.
+# Explicit widget keys are used so Streamlit can never reuse the Company
+# selector's state for the Tracked Market selector.
+if "universe_type" not in st.session_state:
+    st.session_state["universe_type"] = "NIFTY 50 Company"
+
+if "company_symbol" not in st.session_state:
+    st.session_state["company_symbol"] = _first_valid(
+        NIFTY50_SYMBOLS,
+        "HDFCBANK",
+    )
+
+if "tracked_market_symbol" not in st.session_state:
+    st.session_state["tracked_market_symbol"] = _first_valid(
+        TRACKED_MARKETS,
+        "NIFTY 50",
+    )
+
 
 with st.sidebar:
 
@@ -912,7 +990,8 @@ with st.sidebar:
             "NIFTY 50 Company",
             "Tracked Market",
         ],
-        index=0,
+        key="universe_type",
+        on_change=on_universe_type_change,
     )
 
     if universe_type == "NIFTY 50 Company":
@@ -920,6 +999,8 @@ with st.sidebar:
         symbol = st.selectbox(
             "Company",
             list(NIFTY50_SYMBOLS),
+            key="company_symbol",
+            on_change=on_company_change,
         )
 
     else:
@@ -927,6 +1008,8 @@ with st.sidebar:
         symbol = st.selectbox(
             "Market",
             list(TRACKED_MARKETS),
+            key="tracked_market_symbol",
+            on_change=on_tracked_market_change,
         )
 
     # Validate the selected identity immediately.
