@@ -52,6 +52,13 @@ class HistoricalDataProvider:
         result = self.provider.fetch(request)
         return self._validate_result(result)
 
+    def get_ltp(self, symbol, market=""):
+        """Return a provider-native live quote when the concrete provider supports it."""
+        fn = getattr(self.provider, "get_ltp", None)
+        if not callable(fn):
+            raise NotImplementedError("configured provider does not expose live LTP")
+        return fn(symbol, market)
+
     def fetch_normalized(self, symbol, start, end, interval="1d", market=""):
         """Fetch and normalize records using the canonical timestamp-aware layer."""
         result = self.fetch(symbol, start, end, interval, market)
