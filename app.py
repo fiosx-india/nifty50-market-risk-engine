@@ -117,16 +117,260 @@ ANGEL_NATIVE_INTERVAL = {
     "1D": "1D",
 }
 
+ANGEL_SUPPORTED_TIMEFRAMES = tuple(ANGEL_NATIVE_INTERVAL.keys())
+
+# Additional market-wide board settings. The existing detailed selector stays
+# unchanged; this is a separate read-only overview layer.
+LIVE_BOARD_REFRESH_SECONDS = 60
+PREDICTION_HORIZONS = ("5m", "10m", "30m", "1H", "6H")
+
 
 # Angel One historical API path used by this dashboard.
 # These are the timeframes directly supported by the current provider
 # integration.
-ANGEL_SUPPORTED_TIMEFRAMES = tuple(
-    ANGEL_NATIVE_INTERVAL.keys()
-)
+# ===========================================================================
+# LIVE MARKET / PREDICTION BOARD
+# ===========================================================================
+
+def _quote_value(quote: dict, *keys):
+    """Return the first usable numeric quote field."""
+    for key in keys:
+        value = quote.get(key)
+        if value is None:
+            continue
+        try:
+            number = float(value)
+            if pd.notna(number):
+                return number
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _direction_from_change(change_pct):
+    if change_pct is None:
+        return "—"
+    if change_pct > 0.05:
+        return "↑ Up"
+    if change_pct < -0.05:
+        return "↓ Down"
+    return "→ Flat"
+
+
+def _strength_from_change(change_pct):
+    if change_pct is None:
+        return "No data"
+    magnitude = abs(change_pct)
+    if magnitude >= 1.0:
+        return "Strong"
+    if magnitude >= 0.30:
+        return "Moderate"
+    if magnitude >= 0.05:
+        return "Weak"
+    return "Flat"
+
+
+def _outlook_from_change(change_pct):
+    """Directional outlook only; not a guaranteed price forecast."""
+    if change_pct is None:
+        return "Insufficient data"
+    if change_pct >= 0.50:
+        return "Bullish bias"
+    if change_pct >= 0.05:
+        return "Positive bias"
+    if change_pct <= -0.50:
+        return "Bearish bias"
+    if change_pct <= -0.05:
+        return "Negative bias"
+    return "Neutral"
+
+
+def _horizon_outlook(change_pct, horizon):
+    """Map the current observed bias to a clearly-labelled forward outlook.
+
+    This deliberately does not invent a target price. Until a horizon has
+    enough historical observations, the board reports directional bias rather
+    than pretending that a precise future price was predicted.
+    """
+    if change_pct is None:
+        return "No data"
+
+    # Longer horizons require stronger present evidence before carrying a bias
+    # forward. This is a conservative display rule, not a probability model.
+    thresholds = {
+        "5m": 0.05,
+        "10m": 0.10,
+        "30m": 0.15,
+        "1H": 0.20,
+        "6H": 0.35,
+    }
+    threshold = thresholds[horizon]
+
+    if change_pct >= threshold:
+        return "↑ Bias"
+    if change_pct <= -threshold:
+        return "↓ Bias"
+    return "→ Neutral"
+
+
+@st.cache_data(ttl=50, show_spinner=False)
+def _collect_live_board(_provider, companies, markets):
+    """Collect the lightweight live snapshot used by the overview board.
+
+    The existing provider/instrument resolution is reused. Historical candle
+    requests are intentionally not fired for every company on every minute;
+    the board uses the provider's live quote and only reports a directional
+    bias. Detailed historical analysis remains in the selected-symbol area.
+    """
+    rows = []
+    errors = []
+
+    def collect(label, symbol, market, kind):
+        try:
+            quote = _provider.get_ltp(symbol, market)
+            ltp = _quote_value(quote, "ltp", "LTP", "last_traded_price")
+            previous = _quote_value(
+                quote,
+                "close",
+                "prevclose",
+                "previousClose",
+                "previous_close",
+            )
+            change_pct = _quote_value(
+                quote,
+                "percentChange",
+                "percentageChange",
+                "changePercent",
+                "change_percent",
+            )
+            if change_pct is None and ltp is not None and previous:
+                change_pct = ((ltp - previous) / previous) * 100.0
+
+            rows.append({
+                "Type": kind,
+                "Name": label,
+                "Symbol": symbol,
+                "LTP": ltp,
+                "Change %": change_pct,
+                "Direction": _direction_from_change(change_pct),
+                "Strength": _strength_from_change(change_pct),
+                "Outlook": _outlook_from_change(change_pct),
+                "5m": _horizon_outlook(change_pct, "5m"),
+                "10m": _horizon_outlook(change_pct, "10m"),
+                "30m": _horizon_outlook(change_pct, "30m"),
+                "1H": _horizon_outlook(change_pct, "1H"),
+                "6H": _horizon_outlook(change_pct, "6H"),
+            })
+        except Exception as exc:
+            errors.append(f"{label}: {type(exc).__name__}")
+
+    for company in companies:
+        collect(company, company, "NIFTY 50 Company", "Company")
+
+    for market in markets:
+        if str(market).strip().upper() == "ELECTRICITY":
+            rows.append({
+                "Type": "Market",
+                "Name": market,
+                "Symbol": market,
+                "LTP": None,
+                "Change %": None,
+                "Direction": "—",
+                "Strength": "No provider",
+                "Outlook": "Data unavailable",
+                "5m": "No data",
+                "10m": "No data",
+                "30m": "No data",
+                "1H": "No data",
+                "6H": "No data",
+            })
+            continue
+        collect(market, market, market, "Market")
+
+    return pd.DataFrame(rows), errors
+
+
+def render_live_prediction_board():
+    """Render the additional market-wide board without replacing the UI above."""
+    st.divider()
+    st.subheader("📡 Live Market & Forward Outlook")
+    st.caption(
+        "The existing selected-symbol analysis stays above. This board adds a "
+        "one-minute live snapshot for all 50 NIFTY companies and the tracked markets. "
+        "Forward columns are directional bias, not guaranteed price predictions."
+    )
+
+    secrets = get_angel_secrets()
+    if secrets is None:
+        st.warning("Angel One Secrets are not available, so the live board cannot load.")
+        return
+
+    try:
+        board_provider = get_angel_provider(*secrets)
+        board_df, board_errors = _collect_live_board(
+            board_provider,
+            tuple(NIFTY50_SYMBOLS),
+            tuple(TRACKED_MARKETS),
+        )
+    except Exception as exc:
+        st.error(f"Live board could not load: {type(exc).__name__}")
+        return
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Refresh", "Every 1 minute")
+    col2.metric("NIFTY Companies", len(NIFTY50_SYMBOLS))
+    col3.metric("Tracked Markets", len(TRACKED_MARKETS))
+
+    if board_df.empty:
+        st.info("No live board data is available yet.")
+        return
+
+    companies_df = board_df[board_df["Type"] == "Company"].copy()
+    markets_df = board_df[board_df["Type"] == "Market"].copy()
+
+    up = companies_df[companies_df["Change %"].notna()].sort_values(
+        "Change %", ascending=False
+    ).head(5)
+    down = companies_df[companies_df["Change %"].notna()].sort_values(
+        "Change %", ascending=True
+    ).head(5)
+
+    st.markdown("### 🏢 NIFTY 50 — Top 5 Up / Top 5 Down")
+    left, right = st.columns(2)
+    display_cols = ["Name", "LTP", "Change %", "Direction", "Strength", "5m", "30m", "1H", "6H"]
+    with left:
+        st.markdown("**Top 5 Up**")
+        st.dataframe(up[display_cols], hide_index=True, width="stretch")
+    with right:
+        st.markdown("**Top 5 Down**")
+        st.dataframe(down[display_cols], hide_index=True, width="stretch")
+
+    st.markdown("### 🌍 9 Tracked Markets")
+    market_cols = ["Name", "LTP", "Change %", "Direction", "Strength", "5m", "30m", "1H", "6H"]
+    st.dataframe(markets_df[market_cols], hide_index=True, width="stretch")
+
+    st.markdown("### 🔎 All 50 Companies — Early Direction Board")
+    all_cols = [
+        "Name", "LTP", "Change %", "Direction", "Strength", "Outlook",
+        "5m", "10m", "30m", "1H", "6H",
+    ]
+    st.dataframe(
+        companies_df.sort_values("Change %", ascending=False, na_position="last")[all_cols],
+        hide_index=True,
+        width="stretch",
+    )
+
+    if board_errors:
+        st.caption(
+            f"Live quote unavailable for {len(board_errors)} instrument(s) in this refresh. "
+            "The board does not fabricate missing values."
+        )
 
 
 # ===========================================================================
+# SIDEBAR SELECTION STATE
+# ===========================================================================
+
 # SESSION STATE INITIALIZATION
 # ===========================================================================
 
@@ -2273,6 +2517,21 @@ with tab_health:
         "HistoricalDataProvider boundary. Credentials stay in Streamlit Secrets; "
         "the UI does not contain API keys or independent market-analysis logic."
     )
+
+
+# ===========================================================================
+# ADDITIONAL LIVE BOARD
+# ===========================================================================
+
+# Streamlit reruns this fragment every 60 seconds while the rest of the
+# selected-symbol UI remains intact. The existing provider/cache boundary is
+# reused; no second orchestration workflow is introduced.
+@st.fragment(run_every=f"{LIVE_BOARD_REFRESH_SECONDS}s")
+def _live_board_fragment():
+    render_live_prediction_board()
+
+
+_live_board_fragment()
 
 
 # ===========================================================================
