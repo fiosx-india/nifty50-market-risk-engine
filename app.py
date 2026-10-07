@@ -91,16 +91,16 @@ from indicators.market_structure import (
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="NIFTY 50 Market Risk Engine",
-    page_icon="ðŸ“Š",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 
-st.title("ðŸ“Š NIFTY 50 Market Risk Engine")
+st.title("📊 NIFTY 50 Market Risk Engine")
 
 st.caption(
-    "Evidence-first market research dashboard â€¢ "
+    "Evidence-first market research dashboard • "
     "existing engine architecture preserved"
 )
 
@@ -450,11 +450,11 @@ def fmt(value, digits=4):
     """
 
     if value is None:
-        return "â€”"
+        return "—"
 
     try:
         if pd.isna(value):
-            return "â€”"
+            return "—"
 
         return f"{float(value):.{digits}f}"
 
@@ -759,9 +759,7 @@ def build_context(
             "unknown",
         )
 
-    return CentralBrain().analyze(
-        context
-    )
+    return CentralBrain().analyze(context)
 
 
 # ===========================================================================
@@ -1294,7 +1292,7 @@ with st.sidebar:
             )
 
         fetch_angel = st.button(
-            "ðŸ”Œ Fetch from Angel One",
+            "🔌 Fetch from Angel One",
             type="primary",
             width="stretch",
         )
@@ -1658,7 +1656,7 @@ c4.metric(
 if data_source == "Angel One SmartAPI":
 
     st.markdown(
-        "### ðŸ”Œ Angel One Data Status"
+        "### 🔌 Angel One Data Status"
     )
 
     status_col1, status_col2, status_col3, status_col4 = st.columns(4)
@@ -1740,7 +1738,7 @@ if data_source == "Angel One SmartAPI":
 with tab_overview:
 
     st.subheader(
-        f"{symbol} â€¢ {timeframe}"
+        f"{symbol} • {timeframe}"
     )
 
     if df is None:
@@ -1807,7 +1805,7 @@ with tab_overview:
             (
                 f"{fmt(change, 2)}%"
                 if change is not None
-                else "â€”"
+                else "—"
             ),
         )
 
@@ -2164,7 +2162,7 @@ with tab_context:
 
     st.markdown(
         """
-        **Data â†’ Provider â†’ Analysis modules â†’ MarketContext â†’ CentralBrain â†’ UI**
+        **Data → Provider → Analysis modules → MarketContext → CentralBrain → UI**
 
         The UI does not create a second orchestration workflow and does not
         make an independent trading decision.
