@@ -2480,7 +2480,12 @@ with tab_health:
 
         (
             "Historical/relationship layers",
-            True,
+            False,
+        ),
+
+        (
+            "CentralBrain analysis modules",
+            False,
         ),
 
         (
@@ -2497,7 +2502,12 @@ with tab_health:
             {
                 "Component": name,
                 "Status": (
-                    "READY"
+                    "NOT WIRED"
+                    if not ok and name in {
+                        "Historical/relationship layers",
+                        "CentralBrain analysis modules",
+                    }
+                    else "READY"
                     if ok
                     else "NOT CONNECTED"
                 ),

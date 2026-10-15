@@ -666,7 +666,7 @@ class AngelOneHistoricalProvider:
                 "LTP",
                 lambda: self.smart_api.getMarketData(
                     "LTP",
-                    {"exchange": [token]},
+                    {exchange: [token]},
                 ),
             )
         except RuntimeError as exc:

@@ -299,10 +299,37 @@ def mfi(
     )
 
 
+def williams_r_series(
+    high: Sequence[float],
+    low: Sequence[float],
+    close: Sequence[float],
+    period: int = 14,
+) -> list[float | None]:
+    """Return Williams %R for each observation with sufficient history."""
+    h, l, c = _validate_ohlc(high, low, close)
+    period = _validate_period(period)
+    result: list[float | None] = [None] * len(c)
+
+    for index in range(len(c)):
+        window_high = _window(h, index, period)
+        window_low = _window(l, index, period)
+        if window_high is None or window_low is None:
+            continue
+        highest = max(window_high)
+        lowest = min(window_low)
+        range_ = highest - lowest
+        result[index] = (
+            0.0 if range_ == 0
+            else -100.0 * (highest - c[index]) / range_
+        )
+    return result
+
+
 __all__ = [
     "stochastic",
     "stochastic_series",
     "williams_r",
+    "williams_r_series",
     "cci",
     "mfi",
 ]
