@@ -419,9 +419,59 @@ def calculate_timestamped_correlation(
     )
 
 
+def calculate(market_observations, company_observations) -> dict:
+    """Align timestamped observation dictionaries without fabricating pairs."""
+    def normalize(rows, name):
+        normalized = []
+        seen = set()
+        previous = None
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise TypeError(f"{name} observations must be mappings")
+            timestamp = row.get("timestamp")
+            if not isinstance(timestamp, datetime):
+                raise TypeError(f"{name} timestamp must be a datetime")
+            if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+                raise ValueError("timestamp must be timezone-aware UTC timestamp")
+            timestamp = timestamp.astimezone(timezone.utc)
+            if timestamp in seen:
+                raise ValueError(f"duplicate timestamp in {name}: {timestamp.isoformat()}")
+            if previous is not None and timestamp < previous:
+                raise ValueError(f"{name} observations must be chronologically ordered")
+            value = float(row.get("value"))
+            if not isfinite(value):
+                raise ValueError(f"{name} values must be finite")
+            seen.add(timestamp)
+            previous = timestamp
+            normalized.append((timestamp, value))
+        return normalized
+
+    market = normalize(market_observations, "market")
+    company = normalize(company_observations, "company")
+    market_map = dict(market)
+    company_map = dict(company)
+    aligned = sorted(set(market_map).intersection(company_map))
+    pairs = [(market_map[ts], company_map[ts]) for ts in aligned]
+    status = "ok" if len(pairs) >= 2 else "insufficient_data"
+    correlation = (
+        _pearson([pair[0] for pair in pairs], [pair[1] for pair in pairs])
+        if len(pairs) >= 2 else None
+    )
+    return {
+        "sample_size": len(pairs),
+        "aligned_timestamps": aligned,
+        "pairs": pairs,
+        "correlation": correlation,
+        "status": status,
+        "calculation_method": "timestamp_intersection_pearson",
+        "causation_claim": False,
+    }
+
+
 __all__ = [
     "RelationshipResult",
     "calculate_market_relationship",
     "calculate_correlation",
     "calculate_timestamped_correlation",
+    "calculate",
 ]
