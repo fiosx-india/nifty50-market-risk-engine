@@ -714,3 +714,4 @@ class AngelOneHistoricalProvider:
             ),
             "cached_instruments": len(self._instrument_cache),
         }
+
